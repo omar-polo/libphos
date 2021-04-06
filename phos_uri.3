@@ -1,0 +1,113 @@
+.\" Copyright (c) 2021 Omar Polo <op@omarpolo.com>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.Dd $Mdocdate: April 2 2021$
+.Dt PHOS_PARSE_ABSOLUTE_URI 3
+.Os
+.Sh NAME
+.Nm phos_parse_absolute_uri ,
+.Nm phos_parse_uri_reference ,
+.Nm phos_resolve_uri_from_str ,
+.Nm phos_serialize_uri
+.Nd URI-related utilities
+.Sh SYNOPSIS
+.In phos.h
+.Ft int
+.Fn phos_parse_absolute_uri "const char *str" "struct phos_uri *uri"
+.Ft int
+.Fn phos_parse_uri_reference "const char *str" "struct phos_uri *uri"
+.Ft int
+.Fn phos_resolve_uri_from_str "const struct phos_uri *base" "const char *refstr" \
+    "struct phos_uri *ret"
+.Ft int
+.Fn phos_serialize_uri "const struct phos_uri *uri" "char *buf" "size_t len"
+.Sh DESCRIPTION
+These routines are useful to manage URIs in a Gemini context.
+.Pp
+The
+.Vt struct phos_uri
+is defined as follows
+.Bd -literal -offset indent
+struct phos_uri {
+	char		scheme[32];
+	char		host[1024];
+	char		port[6];
+	uint16_t	dec_port;
+	char		path[1024];
+	char		query[1024];
+	char		fragment[32];
+};
+.Ed
+.Pp
+The
+.Vt phos_uri
+fields must be treated as read-only: modifying them outside the
+library will likely produce inconsistencies.
+.Pp
+The functions
+.Nm phos_parse_absolute_uri
+and
+.Nm phos_parse_uri_reference
+fill the given
+.Fa uri
+argument by parsing the raw URI given in
+.Fa str .
+.Fa str
+needs to be a proper NUL-terminated C string with no
+.Dq garbage
+after the URI, or these routine will fail.
+.Pp
+.Fn phos_resolve_uri_from_str
+can be used to resolve the URI reference
+.Fa ref
+from the absolute URI
+.Fa base .
+It's particularly useful in the context of clients to resolve, say, a
+URI in a link line according to the page URI.
+.Pp
+.Fn phos_serialize_uri
+can be used to obtain the string representation of the given URI:
+.Fa buf
+is the output buffer whose size is
+.Fa len
+(which includes also the space for the NUL terminator.)
+.Sh RETURN VALUES
+.Fn phos_parse_absolute_uri ,
+.Fn phos_parse_uri_reference ,
+.Fn phos_resolve_uri_from_str
+returns 0 on failure and 1 on success.
+.Fn phos_resolve_uri_from_str
+will also fail if it cannot parse
+.Fa refstr
+into a URI.
+.Pp
+.Fn phos_serialize_uri
+returns 0 if the given buffer is not large enough and 1 otherwise.
+.Sh SEE ALSO
+.Xr phos_client 3 ,
+.Xr phos_server 3
+.Sh STANDARDS
+.Rs
+.%A T. Berners-Lee
+.%A R. Fielding
+.%A L. Masinter
+.%D January 2005
+.%R RFC 3986
+.%T Uniform Resource Identifier (URI): Generic Syntax
+.Re
+.Sh AUTHORS
+.An Omar Polo Aq Mt op@omarpolo.com
+.Sh CAVEATS
+This routines aren't completely RFC-3986 compliant, as some parts of
+the URI syntax are ignored (i.e. the user info part).
+They are, however, completely functional in a Gemini context.
