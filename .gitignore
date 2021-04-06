@@ -22,3 +22,9 @@ stamp-h1
 test-driver
 *.log
 *.trs
+
+uri_fuzzy
+uri_parse_test
+uri_res_test
+
+tests/.dirstamp
