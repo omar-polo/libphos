@@ -20,6 +20,8 @@
  * - ...
  */
 
+#include "compat.h"
+
 #include "phos.h"
 
 #include <ctype.h>
