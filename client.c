@@ -79,7 +79,7 @@ advance_buf(struct phos_client *client, size_t len)
 static int
 run_asr_query(struct phos_client *client)
 {
-	struct phos_resolv	*asr = client->asr;
+	struct phos_resolv	*asr = client->resolver;
 	struct asr_result	 res;
 
 	client->state = PCS_RESOLUTION;
@@ -88,17 +88,16 @@ run_asr_query(struct phos_client *client)
 		if (res.ar_gai_errno != 0) {
 			client->gai_errno = res.ar_gai_errno;
 			free(asr);
-			client->asr = NULL;
+			client->resolver = NULL;
 			return -1;
 		}
 
 		asr->servinfo = res.ar_addrinfo;
-		asr->p = req.ar_addrinfo;
+		asr->p = res.ar_addrinfo;
 		return do_connect(client);
 	}
 
-	client->re = &run_asr_query;
-	return res.cond == ASR_WANT_READ ? PHOS_WANT_READ : PHOS_WANT_WRITE;
+	return res.ar_cond == ASR_WANT_READ ? PHOS_WANT_READ : PHOS_WANT_WRITE;
 }
 #else
 static int
@@ -142,7 +141,7 @@ open_conn(struct phos_client *client)
 #ifdef HAVE_ASR_RUN
 	res->async = getaddrinfo_async(client->host, proto, &hints, NULL);
 	if (res->async == NULL) {
-		free(asr);
+		free(res);
 		client->resolver = NULL;
 		return -1;
 	}
