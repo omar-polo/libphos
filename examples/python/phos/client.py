@@ -18,7 +18,7 @@ EOF = 10
 ERROR = 11
 
 
-class Client():
+class Client:
     """Async Gemini client.
 
     A client can run only one request at a time, but after one is
