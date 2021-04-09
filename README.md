@@ -12,7 +12,7 @@ Gemini servers and clients.
 
 ## Non-goals
 
-- everything that's not the Gemini protocol (even text/gemini)
+- everything that's not the Gemini protocol (not even text/gemini)
 - extensions of any kind (should I even mention this?)
 
 ## TLS
@@ -46,7 +46,7 @@ phos provides a set of manual page to describe the modules, please see
  - `phos_tls.3` for a description of the TLS abstraction
 
 There are also an example usage in C and some example bindings for
-other languages inside the [example](./example) directory.
+other languages inside the [examples](./examples) directory.
 
 ## License
 
