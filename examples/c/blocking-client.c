@@ -29,7 +29,7 @@ main(void)
 	if ((client = phos_client_new()) == NULL)
 		errx(1, "failed to create a client");
 
-	phos_client_req(client, "localhost", "1966",
+	phos_client_req(client, "localhost", "1996",
 	    "gemini://localhost.it/index.gmi\r\n");
 
         /* (optional) wait for the handshake */
