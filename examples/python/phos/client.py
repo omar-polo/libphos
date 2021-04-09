@@ -1,38 +1,21 @@
 #!/usr/bin/env python3
 
 import asyncio
+import ctypes
 import phos
 from phos import lib
-
-START = 0
-RESOLUTION = 1
-CONNECT = 2
-HANDSHAKE = 3
-POST_HANDSHAKE = 4
-WRITING_REQ = 5
-READING_HEADER = 6
-REPLY_READY = 7
-BODY = 8
-CLOSING = 9
-EOF = 10
-ERROR = 11
 
 
 class Client:
     """Async Gemini client.
 
     A client can run only one request at a time, but after one is
-    finished (i.e. after client.close() returns), it's possible to
-    re-use the same client for another one.
+    finished (i.e. after client.close() has been awaited), it's
+    possible to re-use the same client for another one.
 
-    To start a request use the `request` method.  Then you can either
-    run the state machine tick by tick with `run`, or (preferred)
-    await for specific conditions using the `handshake`, `header`,
-    `recv_chunk` and `close` methods.
     """
 
     def __init__(self):
-        self.future = None
         self.client = lib.phos_client_new()
         if self.client is None:
             raise ValueError('failed to create a new client')
@@ -41,16 +24,13 @@ class Client:
         """Place a request.
 
         Prepare the client to make a request on the given `host`, at
-        the given `port`, with `rawreq` as request.
+        the given `port` with `rawreq` as request.
 
         Only one request can be run at a time on a given Client,
-        otherwise an execption will be raised (but the ongoing request
-        will be untouched.)
-        """
-        s = self.current_state()
-        if s != START and s != EOF and s != ERROR:
-            raise ValueError(f'cannot create request in this state ({s})')
+        otherwise an exception will be raised and the existing request
+        aborted.
 
+        """
         if port is None:
             port = ''
 
@@ -58,118 +38,72 @@ class Client:
         port = port.encode('utf-8')
         rawreq = rawreq.encode('utf-8')
         if lib.phos_client_req(self.client, host, port, rawreq) == -1:
-            raise ValueError('cannot create request (rawreq too long?)')
-        return True
+            raise ValueError('failed to place the request')
 
-    def fd(self):
-        """Get the file descriptor associated with the request, or -1"""
+    def __fd(self):
         return lib.phos_client_fd(self.client)
 
-    def current_state(self):
-        """Get the current state of the client."""
-        return lib.phos_client_state(self.client)
-
-    def code(self):
-        """Get the code of the request.
-
-        It gives a meaningful result only after the REPLY_READY
-        state has been reached (i.e. `header` has been awaited)
-        """
+    def __code(self):
         return lib.phos_client_rescode(self.client)
 
-    def meta(self):
-        """Get the meta of the request.
-
-        It gives a meaningful result only after the REPLY_READY
-        state has been reached (i.e. `header` has been awaited)
-        """
+    def __meta(self):
         return lib.phos_client_resmeta(self.client)
 
-    def chunk(self):
-        """Get the received chunk of the page."""
-        buf = lib.phos_client_buf(self.client)
-        len = lib.phos_client_bufsize(self.client)
-        return (buf, len)
-
-    async def run(self):
-        """Run the state machine for a tick.
-
-        Returns 0 on EOF, can raise exceptions.
-        """
-        if self.future is not None:
-            await self.future
-
-        res = lib.phos_client_run(self.client)
-
-        if res == phos.WANT_READ:
-            self.__schedule_read()
-        elif res == phos.WANT_WRITE:
-            self.__schedule_write()
-        elif res == -1:
-            raise IOError('error during request')
-
-        return res
-
-    def __schedule_read(self):
+    async def __readable(self):
         loop = asyncio.get_running_loop()
-        self.future = loop.create_future()
-        loop.add_reader(self.fd(), lambda: self.___future_done(True))
+        future = loop.create_future()
+        fd = self.__fd()
+        loop.add_reader(fd, lambda: future.set_result(None))
+        await future
+        loop.remove_reader(fd)
 
-    def __schedule_write(self):
+    async def __writeable(self):
         loop = asyncio.get_running_loop()
-        self.future = loop.create_future()
-        loop.add_writer(self.fd(), lambda: self.___future_done(False))
+        future = loop.create_future()
+        fd = self.__fd()
+        loop.add_writer(fd, lambda: future.set_result(None))
+        await future
+        loop.remove_writer(fd)
 
-    def ___future_done(self, is_reader):
-        loop = asyncio.get_running_loop()
-        fd = lib.phos_client_fd(self.client)
-        if is_reader:
-            loop.remove_reader(fd)
-        else:
-            loop.remove_writer(fd)
-        self.future.set_result(True)
-
-    async def until_state(self, state):
-        """Wait until `state` is reached, return immediately otherwise."""
-        s = self.current_state()
-        while s < state:
-            if s == EOF or s == ERROR:
-                return
-            await self.run()
-            s = self.current_state()
+    async def __wait(self, raise_on_eof, fn):
+        while True:
+            r = fn()
+            if r == phos.WANT_READ:
+                await self.__readable()
+            elif r == phos.WANT_WRITE:
+                await self.__writeable()
+            elif r == -1:
+                raise ValueError('error occurred')
+            else:
+                if r == 0 and raise_on_eof:
+                    raise IOError('EOF')
+                return r
 
     async def handshake(self):
         """Wait until the TLS handshake is done."""
-        await self.until_state(HANDSHAKE)
+        await self.__wait(True, lambda: lib.phos_client_handshake(self.client))
 
     async def header(self):
-        """Wait until a response is read.  Return the code and the meta."""
-        await self.until_state(REPLY_READY)
-        return (self.code(), self.meta())
+        await self.__wait(True, lambda: lib.phos_client_response(self.client))
+        return (self.__code(), self.__meta())
 
-    async def recv_chunk(self):
-        """Wait for a chunk, return True if one can be read, False otherwise.
-
-        One should stop looping on `recv_chunk` upon False.
-        """
+    async def read(self):
+        """Read the response, one chunk at a time"""
         while True:
-            s = self.current_state()
-            if s < REPLY_READY:
-                raise ValueError(f'cannot fetch chunk in current state ({s})')
-            if s >= CLOSING:
-                return False
+            ba = bytearray(1024)
+            ca = ctypes.c_char * len(ba)
+            r = await self.__wait(
+                False,
+                lambda: lib.phos_client_read(self.client,
+                                             ca.from_buffer(ba),
+                                             len(ba)))
+            if r == 0:
+                await self.__close()
+                return
+            yield ba[:r]
 
-            await self.run()
-            if lib.phos_client_bufsize(self.client) != 0:
-                return True
-
-    def eof(self):
-        """Whether we've reached EOF."""
-        return self.current_state() >= CLOSING
-
-    async def close(self):
-        """Close the connection"""
-        await self.until_state(EOF)
+    async def __close(self):
+        await self.__wait(False, lambda: lib.phos_client_close(self.client))
 
     def __del__(self):
         if self.client is not None:
@@ -203,14 +137,12 @@ async def main():
         print(f'code={code} meta={meta}')
 
     page = bytearray()
-    while await client.recv_chunk():
-        (chunk, size) = client.chunk()
+    async for chunk in client.read():
+        page += chunk
         if args.verbose > 1:
-            print(f'received {size} bytes')
-        page[len(page):len(page)] = chunk[:size]
-    print(page.decode('utf-8'))
+            print(f'received {len(chunk)} bytes...')
 
-    await client.close()
+    print(page.decode('utf-8'))
 
 if __name__ == '__main__':
     asyncio.run(main())
