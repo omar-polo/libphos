@@ -559,7 +559,8 @@ phos_client_response_sync(struct phos_client *client)
 ssize_t
 phos_client_read(struct phos_client *client, void *data, size_t len)
 {
-	size_t l;
+	size_t	l;
+	ssize_t	r;
 
 	if (client->state == S_REPLY_READY) {
 		if (client->off > 0) {
@@ -580,7 +581,14 @@ phos_client_read(struct phos_client *client, void *data, size_t len)
 		return -1;
 	}
 
-	return client->io->read(client->tls, data, len);
+	r = client->io->read(client->tls, data, len);
+	if (r == 0)
+		client->state = S_CLOSING;
+	if (r == 1) {
+		client->state = S_ERROR;
+		client->io_err = 1;
+	}
+	return r;
 }
 
 ssize_t
