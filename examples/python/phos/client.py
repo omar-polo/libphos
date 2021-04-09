@@ -73,7 +73,7 @@ class Client:
         await self.__wait(True, lambda: lib.phos_client_response(self.client))
         return (self.__code(), self.__meta())
 
-    async def read(self):
+    async def body(self):
         """Read the response, one chunk at a time"""
         while True:
             ba = bytearray(1024)
@@ -123,7 +123,7 @@ async def main():
         print(f'code={code} meta={meta}')
 
     page = bytearray()
-    async for chunk in client.read():
+    async for chunk in client.body():
         page += chunk
         if args.verbose > 1:
             print(f'received {len(chunk)} bytes...')
