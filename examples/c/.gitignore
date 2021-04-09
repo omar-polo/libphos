@@ -1,0 +1,6 @@
+*.pem
+*.o
+blocking-server
+blocking-client
+
+!Makefile
