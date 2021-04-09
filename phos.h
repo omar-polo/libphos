@@ -47,16 +47,17 @@ struct phos_uri {
 
 /* io abstraction */
 struct phos_io {
-	void	*(*client_new)(void);
-	void	*(*server_new)(void);
-	int	 (*setup_client_socket)(void*, int, const char*);
-	void	*(*setup_server_client)(void*, int);
-	int	 (*load_keypair)(void*, const uint8_t*, size_t, const uint8_t*, size_t);
-	int	 (*handshake)(void*);
-	ssize_t	 (*write)(void*, const void*, size_t);
-	ssize_t	 (*read)(void*, void*, size_t);
-	int	 (*close)(void*);
-	int	 (*free)(void*);
+	void		*(*client_new)(void);
+	void		*(*server_new)(void);
+	int		 (*setup_client_socket)(void*, int, const char*);
+	void		*(*setup_server_client)(void*, int);
+	int		 (*load_keypair)(void*, const uint8_t*, size_t, const uint8_t*, size_t);
+	int		 (*handshake)(void*);
+	ssize_t		 (*write)(void*, const void*, size_t);
+	ssize_t		 (*read)(void*, void*, size_t);
+	const char	*(*err)(void*);
+	int		 (*close)(void*);
+	int		 (*free)(void*);
 };
 
 extern struct phos_io phos_libtls;
@@ -83,6 +84,7 @@ struct phos_client {
 	int			 proto_err;
 	int			 gai_errno;
 	int			 c_errno;
+	char			*err;
 
 	int			 code;
 	char			*meta;
@@ -100,7 +102,7 @@ int			 phos_client_response_sync(struct phos_client*);
 ssize_t			 phos_client_read(struct phos_client*, void*, size_t);
 ssize_t			 phos_client_read_sync(struct phos_client*, void*, size_t);
 int			 phos_client_abort(struct phos_client*);
-int			 phos_client_abort_sycn(struct phos_client*);
+int			 phos_client_abort_sync(struct phos_client*);
 int			 phos_client_close(struct phos_client*);
 int			 phos_client_close_sync(struct phos_client*);
 int			 phos_client_del(struct phos_client*);
@@ -109,6 +111,7 @@ int			 phos_client_free(struct phos_client*);
 int			 phos_client_fd(struct phos_client*);
 int			 phos_client_rescode(struct phos_client*);
 const char		*phos_client_resmeta(struct phos_client*);
+const char		*phos_client_err(struct phos_client*);
 
 /* server.c */
 
@@ -118,6 +121,7 @@ struct phos_server {
 	struct phos_io		*io;
 	int			 io_err;
 	int			 c_errno;
+	char			*err;
 };
 
 struct phos_req {
@@ -133,6 +137,7 @@ struct phos_req {
 	int			 io_err;
 	int			 proto_err;
 	int			 c_errno;
+	char			*err;
 };
 
 struct phos_server	*phos_server_new(const char*, const char*);
@@ -161,9 +166,13 @@ int			 phos_req_close_sync(struct phos_req*);
 int			 phos_req_del(struct phos_req*);
 int			 phos_req_free(struct phos_req*);
 
+int			 phos_server_fd(struct phos_server*);
+const char		*phos_server_err(struct phos_server*);
+int			 phos_req_fd(struct phos_req*);
 const char		*phos_req_request_line(struct phos_req*);
 int			 phos_req_sent_code(struct phos_req*);
 const char		*phos_req_sent_meta(struct phos_req*);
+const char		*phos_req_err(struct phos_req*);
 
 /* uri.c */
 int	 phos_parse_uri_reference(const char*, struct phos_uri*);

@@ -16,11 +16,12 @@
 
 #include "compat.h"
 
-#include <errno.h>
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <phos.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -29,7 +30,20 @@
 # include <asr.h>
 #endif
 
+static char *fallback_err = "fallback error message, memory exhausted?";
+
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+#define ERRF(t, fmt, ...)						\
+	do {								\
+		char *errf_e;						\
+		if ((t)->err != NULL && (t)->err != fallback_err)	\
+			free((t)->err);					\
+		if (asprintf(&errf_e, (fmt), __VA_ARGS__) == -1)	\
+			(t)->err = fallback_err;			\
+		else							\
+			(t)->err = errf_e;				\
+	} while(0)
 
 static inline int	mark_nonblock(int);
 static inline void	advance_buf(struct phos_client*, size_t);
@@ -103,8 +117,10 @@ open_conn(struct phos_client *client)
 #ifdef HAVE_ASR_RUN
 	client->asr = getaddrinfo_async(client->host, proto, &hints, NULL);
 	if (client->asr == NULL) {
+		ERRF(client, "can't resolve \"%s\": couldn't create the asr ctx",
+		    client->host);
 		client->asr = NULL;
-		client->proto_err = 1;
+		client->c_errno = ENOMEM;
 		return -1;
 	}
 
@@ -124,6 +140,8 @@ async_resolv(struct phos_client *client)
 
 	if (asr_run(client->asr, &res)) {
 		if (res.ar_gai_errno != 0) {
+			ERRF(client, "couldn't resolve \"%s\": %s",
+			    client->host, gai_strerror(res.ar_gai_errno));
 			client->gai_errno = res.ar_gai_errno;
 			client->asr = NULL;
 			return -1;
@@ -143,6 +161,8 @@ blocking_resolv(struct phos_client *client, const char *proto, struct addrinfo *
 	int status;
 
 	if ((status = getaddrinfo(client->host, proto, hints, &client->servinfo)) != 0) {
+		ERRF(client, "couldn't resolve \"%s\": %s",
+		    client->host, gai_strerror(status));
 		client->gai_errno = status;
 		return -1;
 	}
@@ -164,6 +184,8 @@ do_connect(struct phos_client *client)
 		if (client->fd != -1) {
 			if (getsockopt(client->fd, SOL_SOCKET, SO_ERROR,
 			    &client->c_errno, &len) == -1 || client->c_errno != 0) {
+				ERRF(client, "can't connect to \"%s\": (connect) %s",
+				    client->host, strerror(client->c_errno));
 				close(client->fd);
 				client->fd = -1;
 				continue;
@@ -175,11 +197,15 @@ do_connect(struct phos_client *client)
 		    client->p->ai_protocol);
 		if (client->fd == -1) {
 			client->c_errno = errno;
+			ERRF(client, "can't connect to \"%s\": (socket) %s",
+			    client->host, strerror(client->c_errno));
 			continue;
 		}
 
 		if (mark_nonblock(client->fd) == -1) {
 			client->c_errno = errno;
+			ERRF(client, "can't connect to \"%s\": (mark_nonblock) %s",
+			    client->host, strerror(client->c_errno));
 			return -1;
 		}
 
@@ -210,6 +236,7 @@ setup_tls(struct phos_client *client)
 
 	r= client->io->setup_client_socket(client->tls, client->fd, client->host);
 	if (r == -1) {
+		ERRF(client, "TLS setup error: %s", client->io->err(client->tls));
 		client->io_err = 1;
 		return r;
 	}
@@ -236,6 +263,7 @@ write_request(struct phos_client *client)
 		    len - client->off);
 		switch (r) {
 		case -1:
+			ERRF(client, "TLS write error: %s", client->io->err(client->tls));
 			client->io_err = 1;
 		case 0:
 		case PHOS_WANT_READ:
@@ -267,6 +295,7 @@ read_reply(struct phos_client *client)
 	for (;;) {
 		switch (r = client->io->read(client->tls, buf, len)) {
 		case -1:
+			ERRF(client, "TLS read error: %s", client->io->err(client->tls));
 			client->io_err = 1;
 		case 0:
 		case PHOS_WANT_READ:
@@ -278,6 +307,8 @@ read_reply(struct phos_client *client)
 			if (memmem(client->buf, client->off, "\r\n", 2) != NULL)
 				goto end;
 			else if (client->off == sizeof(client->buf)) {
+				ERRF(client, "%s",
+				    "malformed reply: more than 1026 bytes recv'd and yet no CRLF");
 				client->proto_err = 1;
 				return -1;
 			}
@@ -285,8 +316,10 @@ read_reply(struct phos_client *client)
 	}
 
 end:
-	if ((r = parse_reply(client)) == -1)
+	if ((r = parse_reply(client)) == -1) {
+		ERRF(client, "%s", "malformed reply: can't parse header");
 		client->proto_err = 1;
+	}
 	return r;
 }
 
@@ -335,8 +368,10 @@ close_conn(struct phos_client *client)
 
 	if ((r = client->io->close(client->tls)) == 0)
 		client->state = S_EOF;
-	if (r == -1)
+	if (r == -1) {
+		ERRF(client, "TLS close error: %s", client->io->err(client->tls));
 		client->io_err = 1;
+	}
 
 	return r;
 }
@@ -368,6 +403,8 @@ run_tick(struct phos_client *client)
 		 * until_state after that phos_client_response has
 		 * successfully returned 1.
 		 */
+		ERRF(client, "%s",
+		    "calling into something that waited while you should read the body instead.");
 		client->proto_err = 1;
 		return -1;
 	case S_CLOSING:
@@ -375,6 +412,7 @@ run_tick(struct phos_client *client)
 	case S_EOF:
 		return 0;
 	default:
+		/* calling when already in error? */
 		client->proto_err = 1;
 		return -1;
 	}
@@ -428,8 +466,11 @@ until_state_sync(struct phos_client *client, int state)
 		case PHOS_WANT_WRITE:
 			pfd.fd = client->fd;
 			pfd.events = r == PHOS_WANT_READ ? POLLIN : POLLOUT;
-			if (poll(&pfd, 1, -1) == -1)
+			if (poll(&pfd, 1, -1) == -1) {
+				client->c_errno = errno;
+				ERRF(client, "poll: %s", strerror(client->c_errno));
 				return -1;
+			}
 			break;
 		default:
 			return r;
@@ -491,24 +532,28 @@ phos_client_req(struct phos_client *client, const char *host, const char *port,
 
 	len = sizeof(client->host);
 	if (strlcpy(client->host, host, len) >= len) {
+		ERRF(client, "host too long: max allowed %zu bytes", len);
 		client->proto_err = 1;
 		return -1;
 	}
 
 	len = sizeof(client->port);
 	if (strlcpy(client->port, p, len) >= len) {
+		ERRF(client, "port too long: max allowed %zu bytes", len);
 		client->proto_err = 1;
 		return -1;
 	}
 
 	/* URL + \client\n */
 	if (strlen(req) > 1026) {
+		ERRF(client, "request too long: max allowed %d", 1026);
 		client->proto_err = 1;
 		return -1;
 	}
 
 	if ((client->req = strdup(req)) == NULL) {
 		client->c_errno = errno;
+		ERRF(client, "strdup: %s", strerror(client->c_errno));
 		return -1;
 	}
 
@@ -523,6 +568,7 @@ phos_client_req_uri(struct phos_client *client, struct phos_uri *uri)
 	char	buf[1027];
 
 	if (!phos_serialize_uri(uri, buf, 1025)) {
+		ERRF(client, "%s", "can't serialize URI");
 		client->proto_err = 1;
 		return -1;
 	}
@@ -577,17 +623,20 @@ phos_client_read(struct phos_client *client, void *data, size_t len)
 		return 0;
 
 	if (client->state != S_BODY) {
+		ERRF(client, "%s",
+		    "called phos_client_read on a non-ready client");
 		client->proto_err = 1;
 		return -1;
 	}
 
 	r = client->io->read(client->tls, data, len);
-	if (r == 0)
-		client->state = S_CLOSING;
-	if (r == 1) {
+	if (r == -1) {
+		ERRF(client, "TLS read error: %s", client->io->err(client->tls));
 		client->state = S_ERROR;
 		client->io_err = 1;
 	}
+	if (r == 0)
+		client->state = S_CLOSING;
 	return r;
 }
 
@@ -605,6 +654,7 @@ phos_client_read_sync(struct phos_client *client, void *data, size_t len)
 			pfd.events = r == PHOS_WANT_READ ? POLLIN : POLLOUT;
 			if (poll(&pfd, 1, -1) == -1) {
 				client->c_errno = errno;
+				ERRF(client, "poll: %s", strerror(client->c_errno));
 				return -1;
 			}
 			break;
@@ -633,6 +683,7 @@ phos_client_abort(struct phos_client *client)
 	if (client->state == S_START ||
 	    client->state == S_EOF   ||
 	    client->state == S_ERROR) {
+		ERRF(client, "%s", "called abort on an non-ready client");
 		client->state = S_ERROR;
 		client->proto_err = 1;
 		return -1;

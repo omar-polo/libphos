@@ -34,6 +34,7 @@ static int	 pltls_load_keypair(void*, const uint8_t*, size_t, const uint8_t*, si
 static int	 pltls_handshake(void*);
 static ssize_t	 pltls_write(void*, const void*, size_t);
 static ssize_t	 pltls_read(void*, void*, size_t);
+const char	*pltls_err(void*);
 static int	 pltls_close(void*);
 static int	 pltls_free(void*);
 
@@ -46,6 +47,7 @@ struct phos_io phos_libtls = {
 	.handshake =		pltls_handshake,
 	.write =		pltls_write,
 	.read =			pltls_read,
+	.err =			pltls_err,
 	.close =		pltls_close,
 	.free =			pltls_free,
 };
@@ -143,9 +145,11 @@ pltls_load_keypair(void *data, const uint8_t *cert, size_t certlen,
 {
 	struct phos_libtls *tls = data;
 
-	if (!tls->keyp_loaded)
+	if (!tls->keyp_loaded) {
+		tls->keyp_loaded = 1;
 		return tls_config_set_keypair_mem(tls->conf, cert, certlen,
 		    key, keylen);
+	}
 
 	return tls_config_add_keypair_mem(tls->conf, cert, certlen,
 	    key, keylen);
@@ -188,6 +192,14 @@ pltls_read(void *data, void *buf, size_t len)
 	struct phos_libtls *tls = data;
 
 	return tls_to_phos(0, tls_read(tls->ctx, buf, len));
+}
+
+const char *
+pltls_err(void *data)
+{
+	struct phos_libtls *tls = data;
+
+	return tls_error(tls->ctx);
 }
 
 static int
