@@ -39,7 +39,7 @@ main(void)
 	if (phos_client_response_sync(client) == -1)
 		errx(1, "failed to read reply");
 
-	warnx("got code=%d meta=%s", client->code, client->meta);
+	warnx("code=%d meta=%s", client->code, client->meta);
 
 	for (;;) {
 		switch (r = phos_client_read_sync(client, buf, sizeof(buf))) {
@@ -54,7 +54,6 @@ main(void)
 
 eof:
         phos_client_close_sync(client);
-	warnx("EOF");
         phos_client_del(client);
 
 	return 0;

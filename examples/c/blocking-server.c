@@ -25,38 +25,40 @@ main(void)
 	struct phos_req		 req;
 	const char		*str;
 
-	if (phos_server_init(&serv, NULL, "1966") == -1)
+	if (phos_server_init(&serv, NULL, "1996") == -1)
 		errx(1, "phos_server_init failed");
 
 	if (phos_server_load_keypair_file(&serv, "cert.pem", "key.pem") == -1)
 		errx(1, "failed to load keypair");
 
-	if (phos_server_accept_sync(&serv, &req) == -1)
-		errx(1, "phos_server_accept_sync failed");
+	for (;;) {
+		if (phos_server_accept_sync(&serv, &req) == -1)
+			errx(1, "phos_server_accept_sync failed");
 
-	if (phos_req_handshake_sync(&req) == -1)
-                errx(1, "failed handshake");
+		if (phos_req_handshake_sync(&req) == -1)
+			errx(1, "failed handshake");
 
-	/* can access peer cert data */
+		/* can access peer cert data */
 
-	if (phos_req_read_request_sync(&req) == -1)
-		errx(1, "failed to read request");
+		if (phos_req_read_request_sync(&req) == -1)
+			errx(1, "failed to read request");
 
-	warnx("client requested: %s", req.line);
+		warnx("client requested: %s", req.line);
 
-	/* do something sensible with the data */
+		/* do something sensible with the data */
 
-	if (phos_req_reply_sync(&req, 20, "text/gemini") == -1)
-		errx(1, "failed to write header");
+		if (phos_req_reply_sync(&req, 20, "text/gemini") == -1)
+			errx(1, "failed to write header");
 
-	str = "# hello, world\n";
-	if (phos_req_write_sync(&req, str, strlen(str)) == -1)
-		errx(1, "failed to write response");
+		str = "# hello, world\n";
+		if (phos_req_write_sync(&req, str, strlen(str)) == -1)
+			errx(1, "failed to write response");
 
-	phos_req_close_sync(&req);
+		phos_req_close_sync(&req);
 
-	phos_req_del(&req);
+		phos_req_del(&req);
+	}
+
 	phos_server_del(&serv);
-
 	return 0;
 }
