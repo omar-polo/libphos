@@ -16,9 +16,6 @@
 
 #include "compat.h"
 
-#include <sys/types.h>
-#include <sys/socket.h>
-
 #include <errno.h>
 #include <ctype.h>
 #include <fcntl.h>
@@ -28,32 +25,47 @@
 #include <string.h>
 #include <unistd.h>
 
-static inline int	mark_nonblock(int);
-
 #if HAVE_ASR_RUN
 # include <asr.h>
-static int		run_asr_query(struct phos_client*);
-#else
-static int		blocking_resolv(struct phos_client*, const char*, const char*,
-			    struct addrinfo*);
 #endif
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+static inline int	mark_nonblock(int);
+static inline void	advance_buf(struct phos_client*, size_t);
+
 static int		open_conn(struct phos_client*);
+
+#if HAVE_ASR_RUN
+static int		async_resolv(struct phos_client*);
+#else
+static int		blocking_resolv(struct phos_client*, const char*, struct addrinfo*);
+#endif
+
 static int		do_connect(struct phos_client*);
 static int		setup_tls(struct phos_client*);
 static int		write_request(struct phos_client*);
 static int		read_reply(struct phos_client*);
 static int		parse_reply(struct phos_client*);
-static int		copy_body(struct phos_client*);
 static int		close_conn(struct phos_client*);
 
-struct phos_resolv {
-	struct addrinfo		*servinfo;
-	struct addrinfo		*p;
+static inline int	run_tick(struct phos_client*);
+static int		until_state(struct phos_client*, int);
+static int		until_state_sync(struct phos_client*, int);
 
-#ifdef HAVE_ASR_RUN
-	struct asr_query	*async;
-#endif
+enum phos_client_state {
+	S_START,
+	S_RESOLUTION,
+	S_CONNECT,
+	S_HANDSHAKE,
+	S_POST_HANDSHAKE,
+	S_WRITING_REQ,
+	S_READING_HEADER,
+	S_REPLY_READY,
+	S_BODY,
+	S_CLOSING,
+	S_EOF,
+	S_ERROR,
 };
 
 static inline int
@@ -75,25 +87,50 @@ advance_buf(struct phos_client *client, size_t len)
 	memmove(client->buf, client->buf + len, client->off);
 }
 
+static int
+open_conn(struct phos_client *client)
+{
+	struct addrinfo		 hints;
+	const char		*proto = "1965";
+
+	if (*client->port != '\0')
+		proto = client->port;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+
+#ifdef HAVE_ASR_RUN
+	client->asr = getaddrinfo_async(client->host, proto, &hints, NULL);
+	if (client->asr == NULL) {
+		client->asr = NULL;
+		client->proto_err = 1;
+		return -1;
+	}
+
+	return async_resolv(client);
+#else
+	return blocking_resolv(client, proto, &hints);
+#endif
+}
+
 #if HAVE_ASR_RUN
 static int
-run_asr_query(struct phos_client *client)
+async_resolv(struct phos_client *client)
 {
-	struct phos_resolv	*asr = client->resolver;
 	struct asr_result	 res;
 
-	client->state = PCS_RESOLUTION;
+	client->state = S_RESOLUTION;
 
-	if (asr_run(asr->async, &res)) {
+	if (asr_run(client->asr, &res)) {
 		if (res.ar_gai_errno != 0) {
 			client->gai_errno = res.ar_gai_errno;
-			free(asr);
-			client->resolver = NULL;
+			client->asr = NULL;
 			return -1;
 		}
 
-		asr->servinfo = res.ar_addrinfo;
-		asr->p = res.ar_addrinfo;
+		client->servinfo = res.ar_addrinfo;
+		client->p = res.ar_addrinfo;
 		return do_connect(client);
 	}
 
@@ -101,69 +138,29 @@ run_asr_query(struct phos_client *client)
 }
 #else
 static int
-blocking_resolv(struct phos_client *client, const char *host, const char *proto,
-    struct addrinfo *hints)
+blocking_resolv(struct phos_client *client, const char *proto, struct addrinfo *hints)
 {
-	struct phos_resolv	*r = client->resolver;
 	int status;
 
-	if ((status = getaddrinfo(host, proto, hints, &r->servinfo)) != 0) {
+	if ((status = getaddrinfo(client->host, proto, hints, &client->servinfo)) != 0) {
 		client->gai_errno = status;
-		free(r);
 		return -1;
 	}
 
 	client->fd = -1;
-	r->p = r->servinfo;
+	client->p = client->servinfo;
 	return do_connect(client);
 }
 #endif
 
 static int
-open_conn(struct phos_client *client)
-{
-	struct addrinfo		 hints;
-	struct phos_resolv	*res;
-	const char		*proto = "1965";
-
-	if (*client->port != '\0')
-		proto = client->port;
-
-	if ((res = calloc(1, sizeof(*res))) == NULL)
-		return -1;
-
-	client->resolver = res;
-
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-
-#ifdef HAVE_ASR_RUN
-	res->async = getaddrinfo_async(client->host, proto, &hints, NULL);
-	if (res->async == NULL) {
-		free(res);
-		client->resolver = NULL;
-		return -1;
-	}
-
-	return run_asr_query(client);
-#else
-	return blocking_resolv(client, client->host, proto, &hints);
-#endif
-}
-
-static int
 do_connect(struct phos_client *client)
 {
-	struct phos_resolv	*asr = client->resolver;
-	socklen_t		 len = sizeof(client->c_errno);
-	struct addrinfo		*p;
+	socklen_t	len = sizeof(client->c_errno);
 
-	client->state = PCS_CONNECT;
+	client->state = S_CONNECT;
 
-	for (p = asr->p; p != NULL; p = p->ai_next) {
-		asr->p = p;
-
+	for (; client->p != NULL; client->p = client->p->ai_next) {
 		if (client->fd != -1) {
 			if (getsockopt(client->fd, SOL_SOCKET, SO_ERROR,
 			    &client->c_errno, &len) == -1 || client->c_errno != 0) {
@@ -174,8 +171,8 @@ do_connect(struct phos_client *client)
 			break;
 		}
 
-		client->fd = socket(asr->p->ai_family, asr->p->ai_socktype,
-		    asr->p->ai_protocol);
+		client->fd = socket(client->p->ai_family, client->p->ai_socktype,
+		    client->p->ai_protocol);
 		if (client->fd == -1) {
 			client->c_errno = errno;
 			continue;
@@ -186,18 +183,21 @@ do_connect(struct phos_client *client)
 			return -1;
 		}
 
-		if (connect(client->fd, p->ai_addr, p->ai_addrlen) == 0)
+		if (connect(client->fd, client->p->ai_addr,
+		    client->p->ai_addrlen) == 0)
 			break;
 		return PHOS_WANT_WRITE;
 	}
 
-	freeaddrinfo(asr->servinfo);
-	free(asr);
-	client->resolver = NULL;
+	freeaddrinfo(client->servinfo);
+	client->servinfo = NULL;
 
-	if (p == NULL)
+	if (client->p == NULL) {
+		client->proto_err = 1;
 		return -1;
+	}
 
+	client->p = NULL;
 	return setup_tls(client);
 }
 
@@ -206,16 +206,19 @@ setup_tls(struct phos_client *client)
 {
 	int r;
 
-	client->state = PCS_HANDSHAKE;
+	client->state = S_HANDSHAKE;
 
-	if ((r = client->io->setup_socket(client)) == -1) {
+	r= client->io->setup_client_socket(client->tls, client->fd, client->host);
+	if (r == -1) {
 		client->io_err = 1;
 		return r;
 	}
 	if (r != 1)
 		return r;
 
-	client->state = PCS_POST_HANDSHAKE;
+	client->off = 0;
+
+	client->state = S_POST_HANDSHAKE;
 	return PHOS_WANT_WRITE;
 }
 
@@ -225,11 +228,11 @@ write_request(struct phos_client *client)
 	ssize_t	r;
 	size_t	len;
 
-	client->state = PCS_WRITING_REQ;
+	client->state = S_WRITING_REQ;
 
-	len = strlen(client->buf);
+	len = strlen(client->req);
 	for (;;) {
-		r = client->io->write(client, client->buf + client->off,
+		r= client->io->write(client->tls, client->req + client->off,
 		    len - client->off);
 		switch (r) {
 		case -1:
@@ -252,17 +255,17 @@ write_request(struct phos_client *client)
 static int
 read_reply(struct phos_client *client)
 {
-	size_t		 len;
-	ssize_t		 r;
-	char		*buf;
+	size_t	 len;
+	ssize_t	 r;
+	char	*buf;
 
-	client->state = PCS_READING_HEADER;
+	client->state = S_READING_HEADER;
 
 	buf = client->buf + client->off;
 	len = sizeof(client->buf) - client->off;
 
 	for (;;) {
-		switch (r = client->io->read(client, buf, len)) {
+		switch (r = client->io->read(client->tls, buf, len)) {
 		case -1:
 			client->io_err = 1;
 		case 0:
@@ -287,14 +290,13 @@ end:
 	return r;
 }
 
-
 static int
 parse_reply(struct phos_client *client)
 {
 	char	*e;
 	size_t	 len;
 
-	client->state = PCS_REPLY_READY;
+	client->state = S_REPLY_READY;
 
 	if (client->off < 4)
 		return -1;
@@ -320,28 +322,8 @@ parse_reply(struct phos_client *client)
 	}
 
 	advance_buf(client, len+2);
+	client->meta = client->buf;
 	return PHOS_WANT_READ;
-}
-
-static int
-copy_body(struct phos_client *client)
-{
-	ssize_t r;
-
-	client->state = PCS_BODY;
-
-	r = client->io->read(client, client->buf, sizeof(client->buf));
-	switch (r) {
-	case -1:
-		client->io_err = 1;
-	case 0:
-	case PHOS_WANT_WRITE:
-	case PHOS_WANT_READ:
-		return r;
-	default:
-		client->off = r;
-		return 1;
-	}
 }
 
 static int
@@ -349,21 +331,114 @@ close_conn(struct phos_client *client)
 {
 	int r;
 
-	client->state = PCS_CLOSING;
+	client->state = S_CLOSING;
 
-	if ((r = client->io->close(client)) == 0) {
-		close(client->fd);
-		client->fd = -1;
-		client->state = PCS_EOF;
-	}
+	if ((r = client->io->close(client->tls)) == 0)
+		client->state = S_EOF;
 	if (r == -1)
 		client->io_err = 1;
 
 	return r;
 }
 
+static inline int
+run_tick(struct phos_client *client)
+{
+	/* otherwise run a tick */
+	switch (client->state) {
+	case S_START:
+		return open_conn(client);
+#if HAVE_ASR_RUN
+	case S_RESOLUTION:
+		return async_resolv(client);
+#endif
+	case S_CONNECT:
+		return do_connect(client);
+	case S_HANDSHAKE:
+		return setup_tls(client);
+	case S_POST_HANDSHAKE:
+	case S_WRITING_REQ:
+		return write_request(client);
+	case S_READING_HEADER:
+		return read_reply(client);
+	case S_REPLY_READY:
+	case S_BODY:
+		/*
+		 * it's an error to call a function that call into
+		 * until_state after that phos_client_response has
+		 * successfully returned 1.
+		 */
+		client->proto_err = 1;
+		return -1;
+	case S_CLOSING:
+		return close_conn(client);
+	case S_EOF:
+		return 0;
+	default:
+		client->proto_err = 1;
+		return -1;
+	}
+}
+
+static int
+until_state(struct phos_client *client, int state)
+{
+	int r;
+
+	if (client->state == S_EOF && state == S_EOF)
+		return 0;
+
+	if (client->state == S_EOF ||
+	    client->state == S_ERROR ||
+	    client->state == S_BODY) {
+		client->proto_err = 1;
+		return -1;
+	}
+
+	if (client->state >= state)
+		return 1;
+
+	if ((r = run_tick(client)) == -1)
+		client->state = S_ERROR;
+
+	if (client->state == S_ERROR || client->state == S_EOF) {
+		if (client->fd != -1) {
+			close(client->fd);
+			client->fd = -1;
+		}
+		client->meta = NULL;
+		client->code = 0;
+
+		free(client->req);
+		client->req = NULL;
+	}
+
+	return r;
+}
+
+static int
+until_state_sync(struct phos_client *client, int state)
+{
+	struct pollfd	pfd;
+	int		r;
+
+	for (;;) {
+		switch (r = until_state(client, state)) {
+		case PHOS_WANT_READ:
+		case PHOS_WANT_WRITE:
+			pfd.fd = client->fd;
+			pfd.events = r == PHOS_WANT_READ ? POLLIN : POLLOUT;
+			if (poll(&pfd, 1, -1) == -1)
+				return -1;
+			break;
+		default:
+			return r;
+		}
+	}
+}
+
 
-/* public API */
+/* public api */
 
 struct phos_client *
 phos_client_new(void)
@@ -384,11 +459,15 @@ phos_client_new(void)
 int
 phos_client_init(struct phos_client *client)
 {
-	memset(client, 0, sizeof(*client));
+	explicit_bzero(client, sizeof(*client));
 
 	client->fd = -1;
 	client->io = &phos_libtls;
-	client->state = PCS_EOF;
+
+	if ((client->tls = client->io->client_new()) == NULL) {
+		client->io_err = 1;
+		return -1;
+	}
 
 	return 0;
 }
@@ -400,8 +479,10 @@ phos_client_req(struct phos_client *client, const char *host, const char *port,
 	size_t		 len;
 	const char	*p = "1965";
 
-	if ((client->io->client_init(client)) == -1) {
-		client->state = PCS_ERROR;
+	if (client->state != S_START &&
+	    client->state != S_EOF &&
+	    client->state != S_ERROR) {
+		client->state = S_ERROR;
 		return -1;
 	}
 
@@ -410,148 +491,200 @@ phos_client_req(struct phos_client *client, const char *host, const char *port,
 
 	len = sizeof(client->host);
 	if (strlcpy(client->host, host, len) >= len) {
-		client->state = PCS_ERROR;
+		client->proto_err = 1;
 		return -1;
 	}
 
 	len = sizeof(client->port);
 	if (strlcpy(client->port, p, len) >= len) {
-		client->state = PCS_ERROR;
+		client->proto_err = 1;
 		return -1;
 	}
 
-	if (strlen(req) > 1024) {
-		client->state = PCS_ERROR;
+	/* URL + \client\n */
+	if (strlen(req) > 1026) {
+		client->proto_err = 1;
 		return -1;
 	}
 
-	len = sizeof(client->buf);
-	if (strlcpy(client->buf, req, len) >= len) {
-		client->state = PCS_ERROR;
+	if ((client->req = strdup(req)) == NULL) {
+		client->c_errno = errno;
 		return -1;
 	}
 
-	client->state = PCS_START;
+	client->state = S_START;
 	return 0;
 }
 
 int
 phos_client_req_uri(struct phos_client *client, struct phos_uri *uri)
 {
-	size_t len = sizeof(client->buf);
+	/* URL + \client\n\0 */
+	char	buf[1027];
 
-	if (!phos_serialize_uri(uri, client->buf, len)) {
-		client->state = PCS_ERROR;
+	if (!phos_serialize_uri(uri, buf, 1025)) {
+		client->proto_err = 1;
 		return -1;
 	}
 
-	if (strlcat(client->buf, "\r\n", len) >= len) {
-		client->state = PCS_ERROR;
-		return -1;
-	}
+	strlcat(buf, "\r\n", sizeof(buf));
 
-	return phos_client_req(client, uri->host, uri->port, client->buf);
+	return phos_client_req(client, uri->host, uri->port, buf);
 }
 
-static int
-do_run(struct phos_client *client)
+int
+phos_client_handshake(struct phos_client *client)
 {
-	switch (client->state) {
-	case PCS_START:
-		return open_conn(client);
-#ifdef HAVE_ASR_RUN
-	case PCS_RESOLUTION:
-		return run_asr_query(client);
-#endif
-	case PCS_CONNECT:
-		return do_connect(client);
-	case PCS_HANDSHAKE:
-		return setup_tls(client);
-	case PCS_POST_HANDSHAKE:
-	case PCS_WRITING_REQ:
-		return write_request(client);
-	case PCS_READING_HEADER:
-		return read_reply(client);
-	case PCS_REPLY_READY:
-		client->state = PCS_BODY;
-		if (client->code < 20 || client->code >= 30) {
-			/* this reply shouldn't have a body */
-			client->state = PCS_CLOSING;
-			return do_run(client);
+	return until_state(client, S_POST_HANDSHAKE);
+}
+
+int
+phos_client_handshake_sync(struct phos_client *client)
+{
+	return until_state_sync(client, S_POST_HANDSHAKE);
+}
+
+int
+phos_client_response(struct phos_client *client)
+{
+	return until_state(client, S_REPLY_READY);
+}
+
+int
+phos_client_response_sync(struct phos_client *client)
+{
+	return until_state_sync(client, S_REPLY_READY);
+}
+
+ssize_t
+phos_client_read(struct phos_client *client, void *data, size_t len)
+{
+	size_t l;
+
+	if (client->state == S_REPLY_READY) {
+		if (client->off > 0) {
+			l = MIN(len, client->off);
+			memcpy(data, client->buf, l);
+			advance_buf(client, l);
+			return l;
 		}
-		if (client->off != 0)
-			return 1;
-		/* fallthrough */
-	case PCS_BODY:
-		client->off = 0;
-		return copy_body(client);
-	case PCS_CLOSING:
-		return close_conn(client);
-	case PCS_EOF:
+		client->state = S_BODY;
+	}
+
+	if (client->state == S_CLOSING ||
+	    client->state == S_EOF)
 		return 0;
-	default:
+
+	if (client->state != S_BODY) {
+		client->proto_err = 1;
 		return -1;
 	}
+
+	return client->io->read(client->tls, data, len);
 }
 
-int
-phos_client_run(struct phos_client *client)
+ssize_t
+phos_client_read_sync(struct phos_client *client, void *data, size_t len)
 {
-	int r;
-
-	if ((r = do_run(client)) == -1) {
-		if (client->fd != -1) {
-			close(client->fd);
-			client->fd = -1;
-		}
-		client->state = PCS_ERROR;
-	}
-
-	if (r == 0) {
-		client->state = PCS_EOF;
-	}
-
-	return r;
-}
-
-int
-phos_client_run_sync(struct phos_client *client)
-{
+	ssize_t		r;
 	struct pollfd	pfd;
-	int		r;
-	enum phos_client_state cs;
 
 	for (;;) {
-		cs = client->state;
-		switch (r = phos_client_run(client)) {
-		case -1:
-		case 0:
-		case 1:
-			return r;
+		switch (r = phos_client_read(client, data, len)) {
 		case PHOS_WANT_READ:
 		case PHOS_WANT_WRITE:
-			if (cs != client->state)
-				return 1;
 			pfd.fd = client->fd;
 			pfd.events = r == PHOS_WANT_READ ? POLLIN : POLLOUT;
 			if (poll(&pfd, 1, -1) == -1) {
 				client->c_errno = errno;
 				return -1;
 			}
+			break;
+		default:
+			return r;
 		}
 	}
 }
 
 int
+phos_client_abort(struct phos_client *client)
+{
+#if HAVE_ASR_RUN
+	if (client->state == S_RESOLUTION) {
+		asr_abort(client->asr);
+		client->asr = NULL;
+
+		free(client->req);
+		client->req = NULL;
+
+		client->state = S_EOF;
+		return 0;
+	}
+#endif
+
+	if (client->state == S_START ||
+	    client->state == S_EOF   ||
+	    client->state == S_ERROR) {
+		client->state = S_ERROR;
+		client->proto_err = 1;
+		return -1;
+	}
+
+	client->state = S_CLOSING;
+	return until_state(client, S_EOF);
+}
+
+int
+phos_client_abort_sync(struct phos_client *client)
+{
+	int r;
+
+	switch (r = phos_client_abort(client)) {
+	case 0:
+	case -1:
+		return r;
+	default:
+		return phos_client_close_sync(client);
+	}
+}
+
+int
+phos_client_close(struct phos_client *client)
+{
+	return until_state(client, S_EOF);
+}
+
+int
+phos_client_close_sync(struct phos_client *client)
+{
+	return until_state_sync(client, S_EOF);
+}
+
+int
+phos_client_del(struct phos_client *client)
+{
+	if (client->io->free(client->tls) == -1)
+		return -1;
+
+	return 0;
+}
+
+int
+phos_client_free(struct phos_client *client)
+{
+	if (phos_client_del(client) == -1)
+		return -1;
+	free(client);
+	return 0;
+}
+
+
+/* accessors */
+
+int
 phos_client_fd(struct phos_client *client)
 {
 	return client->fd;
-}
-
-enum phos_client_state
-phos_client_state(struct phos_client *client)
-{
-	return client->state;
 }
 
 int
@@ -564,75 +697,4 @@ const char *
 phos_client_resmeta(struct phos_client *client)
 {
 	return client->meta;
-}
-
-const char *
-phos_client_buf(struct phos_client *client)
-{
-	return client->buf;
-}
-
-size_t
-phos_client_bufsize(struct phos_client *client)
-{
-	return client->off;
-}
-
-int
-phos_client_abort(struct phos_client *client)
-{
-#if HAVE_ASR_RUN
-	struct phos_resolv *res = client->resolver;
-
-	if (client->state == PCS_RESOLUTION) {
-		asr_abort(res->async);
-
-		if (client->resolver != NULL)
-			free(client->resolver);
-
-		client->resolver = NULL;
-		return 0;
-	}
-#endif
-
-	if (client->state == PCS_START ||
-	    client->state == PCS_EOF   ||
-	    client->state == PCS_ERROR)
-		return -1;
-
-	client->state = PCS_CLOSING;
-	return 0;
-	/* return phos_client_run(client); */
-}
-
-int
-phos_client_close(struct phos_client *client)
-{
-	if (client->state != PCS_EOF)
-		return -1;
-
-	free(client->meta);
-	client->meta = NULL;
-	client->code = 0;
-
-	client->io->close(client);
-
-	return 0;
-}
-
-int
-phos_client_del(struct phos_client *client)
-{
-	if (client->tls != NULL)
-		client->io->free(client);
-	explicit_bzero(client, sizeof(*client));
-
-	return 0;
-}
-
-void
-phos_client_free(struct phos_client *client)
-{
-	phos_client_del(client);
-	free(client);
 }

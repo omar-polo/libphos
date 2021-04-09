@@ -21,6 +21,9 @@
 #extern "C" {
 #endif
 
+#include <sys/types.h>
+#include <sys/socket.h>
+
 #include <netdb.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -42,58 +45,39 @@ struct phos_uri {
 	char		fragment[32];
 };
 
-typedef void(*phos_reqcb)(char*, void*);
-
-struct phos_server {
-	int		fd;
-	phos_reqcb	handlefn;
+/* io abstraction */
+struct phos_io {
+	void	*(*client_new)(void);
+	void	*(*server_new)(void);
+	int	 (*setup_client_socket)(void*, int, const char*);
+	void	*(*setup_server_client)(void*, int);
+	int	 (*load_keypair)(void*, const uint8_t*, size_t, const uint8_t*, size_t);
+	int	 (*handshake)(void*);
+	ssize_t	 (*write)(void*, const void*, size_t);
+	ssize_t	 (*read)(void*, void*, size_t);
+	int	 (*close)(void*);
+	int	 (*free)(void*);
 };
 
-struct phos_client;
-
-/* tls abstractions */
-struct phos_tls {
-	int	(*client_init)(struct phos_client*);
-	int	(*setup_socket)(struct phos_client*);
-	ssize_t	(*write)(struct phos_client*, const char*, size_t);
-	ssize_t	(*read)(struct phos_client*, char*, size_t);
-	int	(*close)(struct phos_client*);
-	int	(*free)(struct phos_client*);
-};
-
-extern struct phos_tls phos_libtls;
+extern struct phos_io phos_libtls;
 
 /* client.c */
-
-enum phos_client_state {
-	PCS_START,
-	PCS_RESOLUTION,
-	PCS_CONNECT,
-	PCS_HANDSHAKE,
-	PCS_POST_HANDSHAKE,
-	PCS_WRITING_REQ,
-	PCS_READING_HEADER,
-	PCS_REPLY_READY,
-	PCS_BODY,
-	PCS_CLOSING,
-	PCS_EOF,
-	PCS_ERROR,
-	PCS__MAX,		/* unused, only for bound checking */
-};
 
 struct phos_client {
 	/* internals */
 	void			*tls;
-	struct phos_tls		*io;
-	void			*resolver;
+	struct phos_io		*io;
+	int			 state;
+	struct addrinfo		*servinfo, *p;
+	void			*asr;
 	char			 host[NI_MAXHOST+1];
 	char			 port[NI_MAXSERV+1];
-	char			 buf[1030];
+	char			*req;
+	char			 buf[1027];
 	size_t			 off;
 
 	/* file descriptor of the request, -1 otherwise  */
 	int			 fd;
-	enum phos_client_state	 state;
 
 	int			 io_err;
 	int			 proto_err;
@@ -106,26 +90,80 @@ struct phos_client {
 
 struct phos_client	*phos_client_new(void);
 int			 phos_client_init(struct phos_client*);
-void			 phos_client_set_io(struct phos_client*, struct phos_tls*);
-int			 phos_client_req(struct phos_client*, const char*, const char*, const char*);
+int			 phos_client_req(struct phos_client*, const char*,
+			     const char*, const char*);
 int			 phos_client_req_uri(struct phos_client*, struct phos_uri*);
-int			 phos_client_run(struct phos_client*);
-int			 phos_client_run_sync(struct phos_client*);
+int			 phos_client_handshake(struct phos_client*);
+int			 phos_client_handshake_sync(struct phos_client*);
+int			 phos_client_response(struct phos_client*);
+int			 phos_client_response_sync(struct phos_client*);
+ssize_t			 phos_client_read(struct phos_client*, void*, size_t);
+ssize_t			 phos_client_read_sync(struct phos_client*, void*, size_t);
+int			 phos_client_abort(struct phos_client*);
+int			 phos_client_abort_sycn(struct phos_client*);
+int			 phos_client_close(struct phos_client*);
+int			 phos_client_close_sync(struct phos_client*);
+int			 phos_client_del(struct phos_client*);
+int			 phos_client_free(struct phos_client*);
+
 int			 phos_client_fd(struct phos_client*);
-enum phos_client_state	 phos_client_state(struct phos_client*);
 int			 phos_client_rescode(struct phos_client*);
 const char		*phos_client_resmeta(struct phos_client*);
-const char		*phos_client_buf(struct phos_client*);
-size_t			 phos_client_bufsize(struct phos_client*);
-int			 phos_client_abort(struct phos_client*);
-int			 phos_client_close(struct phos_client*);
-int			 phos_client_del(struct phos_client*);
-void			 phos_client_free(struct phos_client*);
 
 /* server.c */
-int	 phos_server_init(struct phos_server*, const char*, const char*);
-int	 phos_server_run(struct phos_server*, void*);
-int	 phos_server_run_sync(struct phos_server*, void*);
+
+struct phos_server {
+	int			 fd;
+	void			*tls;
+	struct phos_io		*io;
+	int			 io_err;
+	int			 c_errno;
+};
+
+struct phos_req {
+	int			 fd;
+	void			*tls;
+	struct phos_io		*io;
+	struct sockaddr_storage	 addr;
+	char			 line[1027];
+	size_t			 off;
+	int			 code;
+	char			*meta;
+
+	int			 io_err;
+	int			 proto_err;
+	int			 c_errno;
+};
+
+struct phos_server	*phos_server_new(const char*, const char*);
+int			 phos_server_init(struct phos_server*, const char*, const char*);
+int			 phos_server_init_from_fd(struct phos_server*, int);
+int			 phos_server_load_keypair_file(struct phos_server*, const char*, const char*);
+int			 phos_server_load_keypair_mem(struct phos_server*, const uint8_t*, size_t, const uint8_t*, size_t);
+int			 phos_server_accept(struct phos_server*, struct phos_req*);
+int			 phos_server_accept_fd(struct phos_server*, struct phos_req*, int);
+int			 phos_server_accept_sync(struct phos_server*, struct phos_req*);
+int			 phos_server_del(struct phos_server*);
+int			 phos_server_free(struct phos_server*);
+
+struct phos_req		*phos_req_new(void);
+int			 phos_req_handshake(struct phos_req*);
+int			 phos_req_handshake_sync(struct phos_req*);
+int			 phos_req_read_request(struct phos_req*);
+int			 phos_req_read_request_sync(struct phos_req*);
+int			 phos_req_reply(struct phos_req*, int, const char*);
+int			 phos_req_reply_flush(struct phos_req*);
+int			 phos_req_reply_sync(struct phos_req*, int, const char*);
+ssize_t			 phos_req_write(struct phos_req*, const void*, size_t);
+int			 phos_req_write_sync(struct phos_req*, const void*, size_t);
+int			 phos_req_close(struct phos_req*);
+int			 phos_req_close_sync(struct phos_req*);
+int			 phos_req_del(struct phos_req*);
+int			 phos_req_free(struct phos_req*);
+
+const char		*phos_req_request_line(struct phos_req*);
+int			 phos_req_sent_code(struct phos_req*);
+const char		*phos_req_sent_meta(struct phos_req*);
 
 /* uri.c */
 int	 phos_parse_uri_reference(const char*, struct phos_uri*);

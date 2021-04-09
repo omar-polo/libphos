@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/* #include "compat.h" */
+#include "compat.h"
 
 #include <phos.h>
 #include <stdlib.h>
@@ -23,110 +23,177 @@
 struct phos_libtls {
 	struct tls_config	*conf;
 	struct tls		*ctx;
+	int			 keyp_loaded;
 };
 
-static int	pltls_init(struct phos_client*);
-static int	pltls_setup_socket(struct phos_client*);
-static ssize_t	pltls_write(struct phos_client*, const char*, size_t);
-static ssize_t	pltls_read(struct phos_client*, char*, size_t);
-static int	pltls_close(struct phos_client*);
-static int	pltls_free(struct phos_client*);
+static void	*pltls_client_new(void);
+static void	*pltls_server_new(void);
+static int	 pltls_setup_client_socket(void*, int, const char*);
+static void	*pltls_setup_server_client(void*, int);
+static int	 pltls_load_keypair(void*, const uint8_t*, size_t, const uint8_t*, size_t);
+static int	 pltls_handshake(void*);
+static ssize_t	 pltls_write(void*, const void*, size_t);
+static ssize_t	 pltls_read(void*, void*, size_t);
+static int	 pltls_close(void*);
+static int	 pltls_free(void*);
 
-struct phos_tls phos_libtls = {
-	.client_init =	pltls_init,
-	.setup_socket =	pltls_setup_socket,
-	.write =	pltls_write,
-	.read =		pltls_read,
-	.close =	pltls_close,
-	.free =		pltls_free,
+struct phos_io phos_libtls = {
+	.client_new =		pltls_client_new,
+	.server_new =		pltls_server_new,
+	.setup_client_socket =	pltls_setup_client_socket,
+	.setup_server_client =	pltls_setup_server_client,
+	.load_keypair =		pltls_load_keypair,
+	.handshake =		pltls_handshake,
+	.write =		pltls_write,
+	.read =			pltls_read,
+	.close =		pltls_close,
+	.free =			pltls_free,
 };
 
-static int
-pltls_init(struct phos_client *client)
+static void *
+pltls_client_new(void)
 {
 	struct phos_libtls *tls;
 
 	if ((tls = calloc(1, sizeof(*tls))) == NULL)
-		return -1;
+		return NULL;
 
 	if ((tls->conf = tls_config_new()) == NULL) {
-		free(client->tls);
-		client->tls = NULL;
-		return -1;
+		free(tls);
+		return NULL;
 	}
-
-	client->tls = tls;
 
 	tls_config_insecure_noverifycert(tls->conf);
 	/* tls_config_insecure_noveryname(tlsconf); */
 
-	return 0;
+	return tls;
+}
+
+static void *
+pltls_server_new(void)
+{
+	struct phos_libtls *tls;
+
+	if ((tls = calloc(1, sizeof(*tls))) == NULL)
+		goto err;
+
+	if ((tls->conf = tls_config_new()) == NULL)
+		goto err;
+
+	/* optionally accept client certs, but don't try to verify them */
+	tls_config_verify_client_optional(tls->conf);
+	tls_config_insecure_noverifycert(tls->conf);
+
+	return tls;
+
+err:
+	if (tls != NULL) {
+		if (tls->conf != NULL)
+			tls_config_free(tls->conf);
+		free(tls);
+	}
+
+	return NULL;
 }
 
 static int
-pltls_setup_socket(struct phos_client *client)
+pltls_setup_client_socket(void *data, int fd, const char *servname)
 {
-	struct phos_libtls *tls = client->tls;
+	struct phos_libtls *tls = data;
+
+	if ((tls->ctx = tls_client()) == NULL)
+		return -1;
+	if (tls_configure(tls->ctx, tls->conf) == -1)
+		return -1;
+	if (tls_connect_socket(tls->ctx, fd, servname) == -1)
+		return -1;
+	return 1;
+}
+
+static void *
+pltls_setup_server_client(void *data, int fd)
+{
+	struct phos_libtls *tls = data;
+	struct phos_libtls *peer;
 
 	if (tls->ctx == NULL) {
-		if ((tls->ctx = tls_client()) == NULL)
-			return -1;
-		if (tls_configure(tls->ctx, tls->conf) == -1)
-			return -1;
-		if (tls_connect_socket(tls->ctx, client->fd, client->host) == -1)
-			return -1;
+		if ((tls->ctx = tls_server()) == NULL)
+			return NULL;
+		if (tls_configure(tls->ctx, tls->conf) == -1) {
+			tls_free(tls->ctx);
+			tls->ctx = NULL;
+			return NULL;
+		}
 	}
 
-	switch (tls_handshake(tls->ctx)) {
-	case -1:
-		return -1;
-	case TLS_WANT_POLLIN:
-		return PHOS_WANT_READ;
-	case TLS_WANT_POLLOUT:
-		return PHOS_WANT_WRITE;
-	default:
-		return 1;
+	if ((peer = calloc(1, sizeof(*peer))) == NULL)
+		return NULL;
+
+	if (tls_accept_socket(tls->ctx, &peer->ctx, fd) == -1) {
+		free(peer);
+		return NULL;
 	}
+
+	return peer;
+}
+
+static int
+pltls_load_keypair(void *data, const uint8_t *cert, size_t certlen,
+    const uint8_t *key, size_t keylen)
+{
+	struct phos_libtls *tls = data;
+
+	if (!tls->keyp_loaded)
+		return tls_config_set_keypair_mem(tls->conf, cert, certlen,
+		    key, keylen);
+
+	return tls_config_add_keypair_mem(tls->conf, cert, certlen,
+	    key, keylen);
 }
 
 static ssize_t
-pltls_write(struct phos_client *client, const char *buf, size_t len)
+tls_to_phos(int isbool, ssize_t r)
 {
-	struct phos_libtls *tls = client->tls;
-	ssize_t r;
-
-	switch (r = tls_write(tls->ctx, buf, len)) {
+	switch (r) {
 	case TLS_WANT_POLLIN:
 		return PHOS_WANT_READ;
 	case TLS_WANT_POLLOUT:
 		return PHOS_WANT_WRITE;
 	default:
-		/* 0, -1 or the bytes written */
-		return r;
-	}
-}
-
-static ssize_t
-pltls_read(struct phos_client *client, char *buf, size_t len)
-{
-	struct phos_libtls *tls = client->tls;
-	ssize_t r;
-
-	switch (r = tls_read(tls->ctx, buf, len)) {
-	case TLS_WANT_POLLIN:
-		return PHOS_WANT_READ;
-	case TLS_WANT_POLLOUT:
-		return PHOS_WANT_WRITE;
-	default:
-		/* 0, -1 or the bytes written */
+		if (isbool && r == 0)
+			return 1;
 		return r;
 	}
 }
 
 static int
-pltls_close(struct phos_client *client)
+pltls_handshake(void *data)
 {
-	struct phos_libtls *tls = client->tls;
+	struct phos_libtls *tls = data;
+
+	return tls_to_phos(1, tls_handshake(tls->ctx));
+}
+
+static ssize_t
+pltls_write(void *data, const void *buf, size_t len)
+{
+	struct phos_libtls *tls = data;
+
+	return tls_to_phos(0, tls_write(tls->ctx, buf, len));
+}
+
+static ssize_t
+pltls_read(void *data, void *buf, size_t len)
+{
+	struct phos_libtls *tls = data;
+
+	return tls_to_phos(0, tls_read(tls->ctx, buf, len));
+}
+
+static int
+pltls_close(void *data)
+{
+	struct phos_libtls *tls = data;
 
 	if (tls->ctx != NULL) {
 		switch (tls_close(tls->ctx)) {
@@ -135,22 +202,20 @@ pltls_close(struct phos_client *client)
 		case TLS_WANT_POLLOUT:
 			return PHOS_WANT_WRITE;
 		}
+		tls_free(tls->ctx);
+		tls->ctx = NULL;
 	}
 
-	tls_free(tls->ctx);
-	tls->ctx = NULL;
 	return 0;
 }
 
 static int
-pltls_free(struct phos_client *client)
+pltls_free(void *data)
 {
-	struct phos_libtls *tls = client->tls;
+	struct phos_libtls *tls = data;
 
 	tls_config_free(tls->conf);
 	free(tls);
-
-	client->tls = NULL;
 
 	return 0;
 }
