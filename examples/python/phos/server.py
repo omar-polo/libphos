@@ -19,7 +19,7 @@ class Request:
         return lib.phos_req_fd(self.req)
 
     def __line(self):
-        return lib.phos_req_request_line(self.req)
+        return lib.phos_req_request_line(self.req).decode('utf-8')
 
     async def __wait(self, raise_on_eof, fn):
         while True:
@@ -43,12 +43,13 @@ class Request:
         return self.__line()
 
     async def reply(self, code, meta):
+        meta = meta.encode('utf-8')
         lib.phos_req_reply(self.req, code, meta)
         await self.__wait(True, lambda: lib.phos_req_reply_flush(self.req))
 
     async def write(self, buf):
-        if type(buf) is not bytearray:
-            raise TypeError('want a bytearray')
+        if type(buf) is str:
+            buf = bytearray(buf.encode('utf-8'))
 
         while len(buf) > 0:
             arr = ctypes.c_char * len(buf)
@@ -100,9 +101,7 @@ class Server:
     async def run(self):
         req = Request()
         while True:
-            print(f'fd is {self.__fd()}')
             r = lib.phos_server_accept(self.server, req._req())
-            print(f'r is {r}')
             if r == -1:
                 raise Exception('phos server failure')
             elif r == 0:
@@ -110,7 +109,6 @@ class Server:
                 req = Request()
             else:
                 await phos.wait_for_read(self.__fd())
-            print('eee')
 
     def __del__(self):
         lib.phos_server_free(self.server)
