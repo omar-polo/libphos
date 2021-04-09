@@ -33,6 +33,8 @@ class Client:
         """
         if port is None:
             port = ''
+        if type(port) is int:
+            port = str(port)
 
         host = host.encode('utf-8')
         port = port.encode('utf-8')
@@ -49,29 +51,13 @@ class Client:
     def __meta(self):
         return lib.phos_client_resmeta(self.client)
 
-    async def __readable(self):
-        loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        fd = self.__fd()
-        loop.add_reader(fd, lambda: future.set_result(None))
-        await future
-        loop.remove_reader(fd)
-
-    async def __writeable(self):
-        loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        fd = self.__fd()
-        loop.add_writer(fd, lambda: future.set_result(None))
-        await future
-        loop.remove_writer(fd)
-
     async def __wait(self, raise_on_eof, fn):
         while True:
             r = fn()
             if r == phos.WANT_READ:
-                await self.__readable()
+                await phos.wait_for_read(self.__fd())
             elif r == phos.WANT_WRITE:
-                await self.__writeable()
+                await phos.wait_for_write(self.__fd())
             elif r == -1:
                 raise ValueError('error occurred')
             else:
