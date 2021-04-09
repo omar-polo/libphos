@@ -1,29 +1,25 @@
 local phos = require('phos')
 
 local client = phos:new_client()
-client:req("localhost.it", "", "gemini://localhost.it/index.gmi\r\n")
+client:req('localhost', '1996', 'gemini://localhost/\r\n')
+
+client:handshake_sync()
+if client:response_sync() == -1 then
+   error(client:err())
+end
+
+local code, meta = client:res();
+print(string.format('code=%d meta=%s', code, meta))
 
 while true do
-   local r, state = client:run_sync()
-
-   if state == client.s_start then
-      print "in start"
-   elseif state == client.s_resolution then
-      print "during DNS resolution"
-   elseif state == client.s_connect then
-      print "during connect"
-   elseif state == client.s_post_handshake then
-      print "TLS handshake done"
-   elseif state == client.s_reply_ready then
-      local code, meta = client:res()
-      print(string.format("code=%d meta=%s", code, meta))
-   elseif state == client.s_body then
-      print(client:buf())
-   elseif state == client.s_eof then
-      print("EOF")
+   local buf, l = client:read_sync()
+   if l == 0 then
       break
-   elseif state == client.s_error then
-      print("an error occurred")
-      break
+   elseif l == -1 then
+      error(client:err())
+   else
+      print(buf)
    end
 end
+
+client:close_sync()
