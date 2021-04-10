@@ -64,6 +64,7 @@ static int		parse_reply(struct phos_client*);
 static int		close_conn(struct phos_client*);
 
 static inline int	run_tick(struct phos_client*);
+static void		clear_data(struct phos_client*);
 static int		until_state(struct phos_client*, int);
 static int		until_state_sync(struct phos_client*, int);
 
@@ -418,6 +419,20 @@ run_tick(struct phos_client *client)
 	}
 }
 
+static void
+clear_data(struct phos_client *client)
+{
+	if (client->fd != -1) {
+		close(client->fd);
+		client->fd = -1;
+	}
+	client->meta = NULL;
+	client->code = 0;
+
+	free(client->req);
+	client->req = NULL;
+}
+
 static int
 until_state(struct phos_client *client, int state)
 {
@@ -439,17 +454,8 @@ until_state(struct phos_client *client, int state)
 	if ((r = run_tick(client)) == -1)
 		client->state = S_ERROR;
 
-	if (client->state == S_ERROR || client->state == S_EOF) {
-		if (client->fd != -1) {
-			close(client->fd);
-			client->fd = -1;
-		}
-		client->meta = NULL;
-		client->code = 0;
-
-		free(client->req);
-		client->req = NULL;
-	}
+	if (client->state == S_ERROR || client->state == S_EOF)
+		clear_data(client);
 
 	return r;
 }
@@ -634,6 +640,7 @@ phos_client_read(struct phos_client *client, void *data, size_t len)
 		ERRF(client, "TLS read error: %s", client->io->err(client->tls));
 		client->state = S_ERROR;
 		client->io_err = 1;
+		clear_data(client);
 	}
 	if (r == 0)
 		client->state = S_CLOSING;
@@ -686,6 +693,7 @@ phos_client_abort(struct phos_client *client)
 		ERRF(client, "%s", "called abort on an non-ready client");
 		client->state = S_ERROR;
 		client->proto_err = 1;
+		clear_data(client);
 		return -1;
 	}
 
