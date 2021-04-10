@@ -11,102 +11,91 @@
 .\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-.Dd $Mdocdate: April 6 2021$
-.Dt PHOS_CLIENT_NEW 3
+.Dd $Mdocdate: April 10 2021$
+.Dt PHOS_CLIENT 3
 .Os
 .Sh NAME
 .Nm phos_client_new ,
 .Nm phos_client_init ,
-.Nm phos_client_set_io ,
 .Nm phos_client_req ,
 .Nm phos_client_req_uri ,
-.Nm phos_client_run ,
-.Nm phos_client_run_async ,
+.Nm phos_client_handshake ,
+.Nm phos_client_handshake_sync ,
+.Nm phos_client_response ,
+.Nm phos_client_response_sync ,
+.Nm phos_client_read ,
+.Nm phos_client_read_sync ,
+.Nm phos_client_abort ,
+.Nm phos_client_abort_sync ,
+.Nm phos_client_close ,
+.Nm phos_client_close_sync ,
+.Nm phos_client_del ,
+.Nm phos_client_free ,
 .Nm phos_client_fd ,
-.Nm phos_client_state ,
 .Nm phos_client_rescode ,
 .Nm phos_client_resmeta ,
-.Nm phos_client_buf ,
-.Nm phos_client_bufsize ,
-.Nm phos_client_abort ,
-.Nm phos_client_close ,
-.Nm phos_client_del ,
-.Nm phos_client_free
-.Nd asynchronous Gemini client functions
+.Nm phos_client_err
+.Nd functions for asynchronous Gemini clients
 .Sh SYNOPSIS
 .In phos.h
 .Ft struct phos_client *
-.Fn phos_client_new "void"
+.Fn phos_client_new void
 .Ft int
 .Fn phos_client_init "struct phos_client *client"
-.Ft void
-.Fn phos_client_set_io "struct phos_client *client" "struct phos_tls *io"
 .Ft int
-.Fn phos_client_req "struct phos_client *client" "const char *hostname" "const char *port" "const char *rawreq"
+.Fn phos_client_req "struct phos_client *client" "const char *host" "const char *port" "const char *req"
 .Ft int
-.Fn phos_client_req_uri "struct phos_client *client" "struct phos_uri *uri"
+.Fn phos_client_req_uri "struct phos_client *client" "struct phos_uri *URI"
 .Ft int
-.Fn phos_client_run "struct phos_client *client"
+.Fn phos_client_handshake "struct phos_client *client"
 .Ft int
-.Fn phos_client_run_sync "struct phos_client *client"
+.Fn phos_client_handshake_sync "struct phos_client *client"
+.Ft int
+.Fn phos_client_response "struct phos_client *client"
+.Ft int
+.Fn phos_client_response_sync "struct phos_client *client"
+.Ft ssize_t
+.Fn phos_client_read "struct phos_client *client" "void *buf" "size_t len"
+.Ft ssize_t
+.Fn phos_client_read_sync "struct phos_client *client" "void *buf" "size_t len"
+.Ft int
+.Fn phos_client_abort "struct phos_client *client"
+.Ft int
+.Fn phos_client_abort_sync "struct phos_client *client"
+.Ft int
+.Fn phos_client_close "struct phos_client *client"
+.Ft int
+.Fn phos_client_close_sync "struct phos_client *client"
+.Ft int
+.Fn phos_client_del "struct phos_client *client"
+.Ft int
+.Fn phos_client_free "struct phos_client *client"
 .Ft int
 .Fn phos_client_fd "struct phos_client *client"
-.Ft enum phos_client_state
-.Fn phos_client_state "struct phos_client *client"
 .Ft int
 .Fn phos_client_rescode "struct phos_client *client"
 .Ft const char *
 .Fn phos_client_resmeta "struct phos_client *client"
 .Ft const char *
-.Fn phos_client_buf "struct phos_client *client"
-.Ft size_t
-.Fn phos_client_bufsize "struct phos_client *client"
-.Ft int
-.Fn phos_client_abort "struct phos_client *client"
-.Ft int
-.Fn phos_client_close "struct phos_client *client"
-.Ft int
-.Fn phos_client_del "struct phos_client *client"
-.Ft void
-.Fn phos_client_free "struct phos_client *client"
+.Fn phos_client_err "struct phos_client *client"
 .Sh DESCRIPTION
 The
 .Nm phos_client
-functions provide a simple interface to perform asynchronous Gemini
-transaction as clients.
+functions provide a simple interface to perform synchronous and
+asynchronous Gemini requests.
 .Pp
-The principle of operation is as follows:
-A client gets initialised, via either
+To make a request a client needs to be initialized.
+The client is then used to make one or more requests, but only one at
+a time.
+.Pp
+There are two ways to initialize a client, using
 .Fn phos_client_new
-or
-.Fn phos_client_init ,
-then a request is created using either
-.Fn phos_client_req
-or its wrapper
-.Fn phos_client_req_uri .
-A client is fundamentally a state machine:
-creating a request initialise it, then
-.Fn phos_client_run
-or
-.Fn phos_client_run_sync
-are used to run the state machine.
-.Pp
-A running request on a client can be stopped at any time using
-.Fn phos_client_abort
-but then the state machine needs to be advanced anyway until
-completion, because the TLS layer may need to be closed.
-.Pp
-The functions
-.Fn phos_client_fd ,
-.Fn phos_client_state ,
-.Fn phos_client_rescode ,
-.Fn phos_client_resmeta ,
-.Fn phos_client_buf
-and
-.Fn phos_client_bufsize
-are simple accessors for the relative fields in the
-.Vt struct phos_client
-to make it easier to create bindings for other languages.
+(and then freeing the space with
+.Fn phos_client_free )
+or by providing the storage and calling
+.Fn phos_client_init
+(and then freeing with
+.Fn phos_client_del Ns .)
 .Pp
 A
 .Vt struct phos_client
@@ -115,167 +104,247 @@ looks like this
 struct phos_client {
 	/* internals */
 	void			*tls;
-	struct phos_tls		*io;
-	void			*resolver;
+	struct phos_io		*io;
+	int			 state;
+	struct addrinfo		*servinfo, *p;
+	void			*asr;
 	char			 host[NI_MAXHOST+1];
 	char			 port[NI_MAXSERV+1];
-	char			 buf[1030];
+	char			*req;
+	char			 buf[1027];
 	size_t			 off;
 
+	/* file descriptor of the request, -1 otherwise  */
 	int			 fd;
-	enum phos_client_state	 state;
 
 	int			 io_err;
 	int			 proto_err;
 	int			 gai_errno;
 	int			 c_errno;
+	char			*err;
 
 	int			 code;
 	char			*meta;
 };
 .Ed
 .Pp
-Conceptually, a client is a state machine that goes through the
-following states
-.Bl -tag -width PCS_POST_HANDSHAKE
-.It Dv PCS_START
-The default state.
-.It Dv PCS_RESOLUTION
-On systems that have a way to do asynchronous DNS lookups, a client is
-in this state during the domain name resolution.
-.It Dv PCS_CONNECT
-The client is trying to establish a connection to the remote host.
-.It Dv PCS_HANDSHAKE
-The TLS handshake is ongoing.
-.It Dv PCS_POST_HANDSHAKE
-The TLS handshake was successful, it's the right time to check for the
-remote peer certificate.
-.It Dv PCS_WRITING_REQ
-The client is sending the request.
-.It Dv PCS_READING_HEADER
-The client is reading the server reply.
-.It Dv PCS_REPLY_READY
-The response was received successfully.
-It's safe to read the response code and meta, using the
-.Va code
-and
-.Va meta
-field, or the
-.Fn phos_client_rescode
-and
-.Fn phos_client_resmeta
-functions.
-.It Dv PCS_BODY
-A chunk of the server reply can be read.
-The buffer is stored in the
-.Va buf
-field of the
-.Vt phos_client
-struct, and its length is in the
-.Va off
-field.
-This information can be obtained also via
-.Fn phos_client_buf
-and
-.Fn phos_client_bufsize .
-.It Dv PCS_CLOSING
-Shutting down the TLS client.
-.It Dv PCS_EOF
-The transaction was completed.
-.It Dv PCS_ERROR
-An error happened.
-.El
-.Pp
-After a request has been done, its data should be freed using
-.Fn phos_client_close .
-After that, a new request can be placed on the very same
-.Vt struct phos_client .
-.Sh RUNNING THE STATE MACHINE
-There are two function that are responsible of running the state
-machine.
-.Fa phos_client_run
-runs a tick and then returns.
-Its return value can indicate an error condition, the end of the
-Gemini transaction or the condition that must be fullfilled to advance
-the state machine (i.e. the socket ready for writing or reading.)
-Depending on the network condition, the server software and other
-details, a single state can, and usually will, last for a few
-iterations.
-.Fa phos_client_run_sync
-is the blocking counterpart.
-It's guaranteed to return only one time per state (exception being
-.Dv PCS_BODY
-for obvious reason)
-and doesn't ask for reading or writing condition on the socket.
-.Sh ERROR HANDLING
-When an error occurs the client switches immediately to the
-.Dv PCS_ERROR
-state.
-At the moment, it's not exactly straightforward to access the error
-information (sorry!)
-.Pp
-One should first check the
-.Va io_err
-field in the client: if it's non-zero then a TLS error occurred.
-Then
-.Va proto_err
-should be checked: if it's non-zero then a protocol violation happened
-(e.g. a malformed reply from the server).
+The first part, the one marked with
+.Dq internals
+is an implementation detail, future version of the library can change
+the fields and order without notice.
 The
-.Va gai_errno ,
-if non-zero, indicates an error in the DNS resolution.
+.Dq public
+fields starts with
+.Va fd
+and can be freely accessed.
+.Pp
+Once you have an initialized client, you can load a request with
+.Fn phos_client_req
+by providing the
+.Fa host
+you want to connect to, the
+.Fa port
+and the
+.Fa raq
+raw request string (which will be sent as-is to the server.)
+The
+.Fn phos_client_req_uri
+is provided as a wrapper: it makes a request given a
+.Fa URI .
+See
+.Xr phos_uri 3
+for more information.
+.Pp
+.Fn phos_client_handshake
+is used to explicitly perform the TLS handshake.
+It is only necessary to call this function if you need to guarantee
+that the handshake has completed, as
+.Fn phos_client_response
+and
+.Fn phos_client_read
+will automatically perform the TLS handshake when necessary.
+.Pp
+.Fn phos_client_response
+can be used to know when the server response is available
+and
+.Fn phos_client_read
+to read a chunk of the server reply.
+.Pp
+.Fn phos_client_abort
+is provided to stop an ongoing request, maybe because your client
+can't handle the MIME type provided by the server.
+There's no need to explicitly abort non-2X responses.
+.Pp
+Once all the server reply has been read, or after the client has
+decided to abort the request
+.Fn phos_client_close
+needs to be called to properly shut down the connection.
+.Pp
+After a connection has been properly closed, it's possible to re-use
+the same client to perform another one.
+.Pp
+Most of the function described until now are asynchronous: it means
+that on some occasions they may need to be called again when a certain
+condition is fulfilled (i.e. the socket is ready for writing or
+reading.)
+Another set of function are provided: the _sync ones.
+They are just like their non-_sync counterpart, but will wait until
+that operation has been successfully performed.
+.Fn phos_client_handshake_sync
+is the blocking version of
+.Fn phos_client_handshake ,
+.Fn phos_client_response_sync
+is the blocking version of
+.Fn phos_client_response
+and so on.
+.Pp
+.Fn phos_client_fd ,
+.Fn phos_client_rescode ,
+.Fn phos_client_resmeta
+and
+.Fn phos_client_err
+are accessor respectively for the
+.Va fd ,
+.Va code ,
+.Va meta
+and
+.Va err
+field of
+.Vt struct phos_client
+to ease the creation of binding for other languages.
+.Sh ERROR HANDLING
+All errors are fatal, there's no way to recover a connection after an
+error has been detected.
+.Pp
+For most user, the return value of the function and the error string
+present in the
+.Va err
+field of the
+.Vt struct phos_client
+will be enough, but if you need to access programmatically the error
+type, then the value of the various
+.Dq err
+fields will be useful.
+.Pp
+A non-zero
+.Va io_err
+indicate an error in the TLS I/O layer;
+a non-zero
+.Va proto_err
+indicate a protocol violation (e.g. an header too long or an invalid
+status code);
+a non-zero
+.Va gai_errno
+indicate an error during the hostname resolution,
+please consult
+.Xr gai_strerror 3
+for more information.
 Finally, a non-zero
 .Va c_errno
-indicate an error from the C standard library, usually
-.Er ENOMEM .
+indicates an error from the C stdlib (i.e.
+.Er ENOMEM Ns .)
+.Sh THREAD SAFETY
+It's possible to run multiple clients on the same or on different
+threads concurrently, but if you want to share the same client between
+different threads then each call to a
+.Nm phos_client
+function must be protected by a mutex.
+.Sh EXAMPLES
+The following example demonstrates how to handle a transaction in a
+blocking manner:
+.Bd -literal -offset indent
+#include <err.h>
+#include <phos.h>
+#include <stdio.h>
+#include <unistd.h>
+
+struct phos_client	*client;
+char			 buf[BUFSIZ];
+ssize_t			 r;
+
+if ((client = phos_client_new()) == NULL)
+	errx(1, "failed to create a client");
+
+phos_client_req(client, "localhost", "1965",
+    "gemini://localhost/index.gmi\\r\\n");
+
+/* (optional) wait for the handshake */
+if (phos_client_handshake_sync(client) == -1)
+	errx(1, "handshake failed: %s", client->err);
+
+if (phos_client_response_sync(client) == -1)
+	errx(1, "failed to read reply: %s", client->err);
+
+printf("code=%d meta=%s\\n", client->code, client->meta);
+
+for (;;) {
+	r = phos_client_read_sync(client, buf, sizeof(buf));
+	switch (r) {
+	case 0: /* EOF */
+		phos_client_close_sync(client);
+		phos_client_free(client);
+		return;
+	case -1:
+		errx(1, "failure: %s", client->err);
+	default:
+		write(1, buf, r);
+	}
+}
+.Ed
 .Sh RETURN VALUES
 .Fn phos_client_new
-returns a pointer to a newly allocated client or NULL on error.
+returns NULL on failure.
 .Pp
-.Fn phos_client_init ,
-.Fn phos_client_req ,
-.Fn phos_client_req_uri ,
+.Fn phos_client_read
+and
+.Fn phos_client_read_sync
+returns the bytes read, 0 on EOF or -1 on error.
+.Pp
+.Fn phos_client_handshake ,
+.Fn phos_client_handshake_sync ,
+.Fn phos_client_response ,
+.Fn phos_client_response_sync ,
 .Fn phos_client_abort ,
+.Fn phos_client_abort_sync ,
 .Fn phos_client_close
 and
-.Fn phos_client_del
-returns 0 on success and -1 on failure.
+.Fn phos_client_close_sync
+returns 1 on success, 0 on EOF and -1 on error.
 .Pp
-.Fn phos_client_run
-returns 0 on EOF, -1 on failure or
-.Dv PHOS_WANT_WRITE
-or
-.Dv PHOS_WANT_READ
-to indicate that the underlying file descriptor needs to be readable
-or writeable in order to continue; any other value means that
-.Fn phos_client_run
-should be called again immediately.
-.Pp
-.Fn phos_client_run_sync
-return 0 on EOF, -1 on failure or 1 otherwise.
-.Pp
-.Fn phos_client_fd
-returns the underlying file descriptor, or -1.
-.Pp
-.Fn phos_client_state
-returns the current client state.
-.Pp
-.Fn phos_client_rescode
+In addition the
+.Fn phos_client_handshake ,
+.Fn phos_client_response ,
+.Fn phos_client_read ,
+.Fn phos_client_abort
 and
-.Fn phos_client_resmeta
-returns the status code and the
-.Dq meta
-line of the reply if it has been read, 0 and NULL respectively
-otherwise.
+.Fn phos_client_close
+functions also have two special return values:
+.Bl -tag -offset indent -width PHOS_WANT_WRITE
+.It PHOS_WANT_READ
+The underlying file descriptor needs to be readable in order to
+continue
+.It PHOS_WANT_WRITE
+The underlying file descriptor needs to be writeable in order to
+continue.
+.El
 .Pp
-.Fn phos_client_buf
+.Fn phos_client_init ,
+.Fn phos_client_req
 and
-.Fn phos_client_bufsize
-returns the buffer and its size.
-A size of 0 doesn't mean an end-of-file condition.
+.Fn phos_client_req_uri
+returns 0 on success or -1 on error.
 .Sh SEE ALSO
 .Xr phos_server 3 ,
-.Xr phos_tls 3 ,
-.Xr phos_uri 3
+.Xr phos_uri
 .Sh AUTHORS
 .An Omar Polo Aq Mt phos@omarpolo.com
+.Sh CAVEATS
+The
+.Va err
+field must not be freed by the application, or a double free error
+will occur.
+The pointer will become invalid when the next error occurs, so if the
+application needs the message at a later time, it has to copy the
+string before calling the next
+.Nm phos_client
+function.
