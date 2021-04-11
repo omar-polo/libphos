@@ -32,7 +32,7 @@ main(void)
 	phos_client_req(client, "localhost", "1996",
 	    "gemini://localhost.it/index.gmi\r\n");
 
-        /* (optional) wait for the handshake */
+	/* (optional) wait for the handshake */
 	if (phos_client_handshake_sync(client) == -1)
 		errx(1, "handshake failed");
 
@@ -53,8 +53,8 @@ main(void)
 	}
 
 eof:
-        phos_client_close_sync(client);
-        phos_client_del(client);
+	phos_client_close_sync(client);
+	phos_client_free(client);
 
 	return 0;
 }
