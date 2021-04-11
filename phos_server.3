@@ -1,0 +1,249 @@
+.\" Copyright (c) 2021 Omar Polo <op@omarpolo.com>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.Dd $Mdocdate: April 11 2021$
+.Dt PHOS_SERVER 3
+.Os
+.Sh NAME
+.Nm phos_server_new ,
+.Nm phos_server_init ,
+.Nm phos_server_init_from_fd ,
+.Nm phos_server_load_keypair_file ,
+.Nm phos_server_accept ,
+.Nm phos_server_accept_fd ,
+.Nm phos_server_accept_sync ,
+.Nm phos_server_del ,
+.Nm phos_server_free
+.Nd functions for asynchronous Gemini servers
+.Sh SYNOPSIS
+.In phos.h
+.Ft struct phos_server *
+.Fn phos_server_new "const char *hostname" "const char *port"
+.Ft int
+.Fn phos_server_init "struct phos_server *serv" "const char *hostname" "const char *port"
+.Ft int
+.Fn phos_server_from_fd "struct phos_server *serv" "int sock"
+.Ft int
+.Fn phos_server_load_keypair_file "struct phos_server *serv" "const char *cert" "const char *key"
+.Ft int
+.Fn phos_server_load_keypair_mem "struct phos_server *serv" "const uint8_t *certmem" "size_t cert_size" "const uint8_t *keymem" "size_t key_size"
+.Ft int
+.Fn phos_server_accept "struct phos_server *serv" "struct phos_req *req"
+.Ft int
+.Fn phos_server_accept_fd "struct phos_server *serv" "struct phos_req *req" "int fd"
+.Ft int
+.Fn phos_server_accept_sync "struct phos_server *serv" "struct phos_req *req"
+.Ft int
+.Fn phos_server_fd "struct phos_server *err"
+.Ft const char *
+.Fn phos_server_err "struct phos_server *err"
+.Ft int
+.Fn phos_server_del "struct phos_server *serv"
+.Ft int
+.Fn phos_server_free "struct phos_server *serv"
+.Sh DESCRIPTION
+The
+.Nm phos_server
+functions provide a simple interface to create Gemini servers.
+For a complete description on how to handle clients once they're
+connected, please refer to
+.Xr phos_req 3 .
+.Pp
+The main way to create a server is to call
+.Fn phos_server_init :
+it will create a socket listening on the given
+.Fa hostname
+and
+.Fa port .
+If the
+.Fa hostname
+is NULL or an empty string then the server will be listening on any
+address.
+.Fa port
+is either a decimal port number or a service name listed in
+.Xr service 5 ,
+if it's NULL or an empty string then a value of
+.Dq 1965
+is assumed.
+Refer to
+.Xr getaddrinfo 3
+for more information on how these two parameters are processed.
+.Pp
+.Fn phos_server_new
+is similar but it will automatically allocate the storage needed.
+.Pp
+Finally, a third variant is
+.Fn phos_server_from_fd
+that creates a
+.Nm phos_server
+given a raw socket.
+This is useful if the application wants to set up the socket by itself
+or if a UNIX-domain socket is wanted for whatever reason.
+NB: the
+.Fa sock
+file descriptor will be made non-blocking.
+.Pp
+The socket file descriptor can be obtained with
+.Fn phos_server_fd .
+.Pp
+Once a server has been created, and before it can accept clients, one
+or more TLS certificates needs to be loaded.
+.Fn phos_server_load_keypair_file
+loads a key pair (a certificate and its key) from the paths given in
+.Fa cert
+and
+.Fa key .
+.Fn phos_server_load_keypair_mem
+is similar but loads the keypair from memory, with the certificate
+starting at the address
+.Fa certmem
+and long
+.Fa cert_size
+bytes and the key at
+.Fa keymem
+and long
+.Fa key_size
+bytes.
+.Pp
+To start accepting connection,
+.Fa phos_server_accept
+needs to be called.
+On success, the
+.Fa req
+parameter will be initialized to handle the client.
+See
+.Xr phos_req 3
+for more information on how to handle a Gemini transaction from the
+server point of view.
+.Fn phos_server_accept_sync
+is similar but will block until either an error occurs or a client
+connected.
+.Fn phos_server_accept_fd
+initialise a
+.Fa req
+using the given
+.Fa fd
+file descriptor, and is particularly useful for testing.
+.Pp
+.Fn phos_server_err
+can be used to retrieve a string representing the last error occurred.
+.Pp
+.Fn phos_server_free
+can be used to close the server socket and free the allocated
+resources, but if the server was created using
+.Fn phos_server_new
+then
+.Fn phos_server_free
+must be called to avoid memory leaks.
+.Sh THREAD SAFETY
+Multiple servers can be run concurrently on the same thread, or on
+different ones, but if you want to share the same server between
+different threads then each call to a
+.Nm phos_server
+functions must be protected by a mutex.
+.Sh RETURN VALUES
+.Fn phos_server_init ,
+.Fn phos_server_from_fd ,
+.Fn phos_server_load_keypair_file ,
+.Fn phos_server_load_keypair_mem ,
+.Fn phos_server_accept ,
+.Fn phos_server_accept_sync ,
+and
+.Fn phos_server_accept_fd
+returns 0 on success and -1 on failure.
+.Pp
+In addition,
+.Fn phos_server_accept
+can return also the special value
+.Dv PHOS_WANT_READ
+if the underlying socket hadn't had any client pending.
+The function should be called again when the socket is readable.
+.Pp
+.Fn phos_server_new
+returns NULL on failure.
+.Pp
+.Fn phos_server_fd
+returns the socket file descriptor, or -1 if an error occurred during
+.Fn phos_server_init .
+.Pp
+.Fn phos_server_err
+returns a string, or NULL if no error occurred.
+.Sh EXAMPLES
+The following examples demonstrates how to create a server and accept
+clients in a blocking manner:
+.Bd -literal -offset indent
+#include <err.h>
+#include <phos.h>
+
+struct phos_server	serv;
+struct phos_req		req;
+
+if (phos_server_init(&serv, "localhost", "1965") == -1)
+	err(1, "phos_server_init")
+
+if (phos_server_load_keypair_file(&serv, "cert.pem", "key.pem")
+    == -1)
+	errx(1, "cannot load keypair: %s", phos_server_err(&serv));
+
+for (;;) {
+	if (phos_server_accept_sync(&serv, &req) == -1)
+		errx(1, "failed to accept client: %s",
+		    phos_server_err(&serv));
+
+	handle_client(&req);
+}
+
+phos_server_del(&serv);
+.Ed
+.Pp
+The following example demonstrates how to use the non-blocking accept:
+.Bd -literal -offset indent
+\&...
+int r;
+struct pollfd pfd;
+
+for (;;) {
+	if ((r = phos_server_accept(&serv, &req)) == -1)
+		errx(1, "phos_server_accept: %s",
+		    phos_server_err(&serv));
+	if (r == 0)
+		break;
+
+	pfd.fd = phos_server_fd(&serv);
+	pfd.events = POLLIN;
+	if (poll(&pfd, 1, -1) == -1)
+		err(1, "poll");
+}
+\&...
+.Ed
+.Sh SEE ALSO
+.Xr phos_client 3 ,
+.Xr phos_io 3 ,
+.Xr phos_req 3 ,
+.Xr phos_uri 3
+.Sh AUTHORS
+.An Omar Polo Aq Mt phos@omarpolo.com
+.Sh CAVEATS
+The
+.Fn phos_server_err
+return must not be freed by the application, or a double free error
+will occur.
+The pointer will become invalid when the next error occurs, so if the
+application needs the message at a later time, it has to copy the
+string before calling the next
+.Nm phos_server
+function.
+.Pp
+It's not possible to obtain the error string when
+.Fn phos_server_new
+fails.
