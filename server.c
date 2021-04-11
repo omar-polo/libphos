@@ -297,6 +297,7 @@ int
 phos_server_del(struct phos_server *serv)
 {
 	serv->io->close(serv->tls);
+	serv->io->free(serv->tls);
 	close(serv->fd);
 	return 0;
 }
