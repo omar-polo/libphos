@@ -47,7 +47,7 @@
 
 #define fail(reason) { *err = reason; return 0; }
 
-int
+static int
 do_test(struct phos_uri *uri, const char *rawstr, const char *schema,
     const char *host, const char *port, const char *path,
     const char *query, const char *frag, const char **err)
