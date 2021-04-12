@@ -128,7 +128,7 @@ struct phos_req {
 	/* internals */
 	void			*tls;
 	struct phos_io		*io;
-	const char		*meta;
+	char			*meta;
 	int			 code;
 
 	int			 fd;
