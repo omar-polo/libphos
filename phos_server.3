@@ -224,6 +224,8 @@ for (;;) {
 	if (poll(&pfd, 1, -1) == -1)
 		err(1, "poll");
 }
+
+handle_client(&req);
 \&...
 .Ed
 .Sh SEE ALSO
