@@ -40,10 +40,11 @@ before if you're building from a git checkout and not a tarball.
 
 phos provides a set of manual page to describe the modules, please see
 
- - `phos_uri.3` for the URI parser
  - `phos_client.3` for the client description
+ - `phos_io.3` for a description of the TLS abstraction
+ - `phos_req.3` on how to handle client connections from a server
  - `phos_server.3` for the server description
- - `phos_tls.3` for a description of the TLS abstraction
+ - `phos_uri.3` for the URI parser
 
 There are also an example usage in C and some example bindings for
 other languages inside the [examples](./examples) directory.
