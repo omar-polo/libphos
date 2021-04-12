@@ -32,7 +32,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static char *fallback_err = "fallback error message, memory exhausted?";
+static const char *fallback_err = "fallback error message, memory exhausted?";
 
 #define ERRF(t, fmt, ...)						\
 	do {								\
@@ -40,7 +40,7 @@ static char *fallback_err = "fallback error message, memory exhausted?";
 		if ((t)->err != NULL && (t)->err != fallback_err)	\
 			free((t)->err);					\
 		if (asprintf(&errf_e, (fmt), __VA_ARGS__) == -1)	\
-			(t)->err = fallback_err;			\
+			(t)->err = (char*)fallback_err;			\
 		else							\
 			(t)->err = errf_e;				\
 	} while(0)
