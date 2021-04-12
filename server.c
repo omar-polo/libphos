@@ -524,6 +524,7 @@ phos_req_close(struct phos_req *req)
 		close(req->fd);
 		req->fd = -1;
 	}
+	return r;
 }
 
 int
