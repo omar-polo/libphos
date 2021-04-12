@@ -7,7 +7,7 @@ lib_LTLIBRARIES =	libphos.la
 libphos_la_SOURCES =	libtls.c phos_client.c phos_server.c phos_uri.c
 libphos_la_LDFLAGS =	-version-info 0:0:0
 
-dist_man3_MANS =	phos_uri.3
+dist_man3_MANS =	phos_client.3 phos_server.3 phos_req.3 phos_uri.3
 
 # tests
 
