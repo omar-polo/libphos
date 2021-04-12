@@ -4,7 +4,7 @@ include_HEADERS =	phos.h
 
 lib_LTLIBRARIES =	libphos.la
 
-libphos_la_SOURCES =	client.c libtls.c server.c uri.c
+libphos_la_SOURCES =	libtls.c phos_client.c phos_server.c phos_uri.c
 libphos_la_LDFLAGS =	-version-info 0:0:0
 
 dist_man3_MANS =	phos_uri.3
