@@ -12,8 +12,12 @@ Gemini servers and clients.
 
 ## Non-goals
 
-- everything that's not the Gemini protocol (not even text/gemini)
+- everything that's not the Gemini protocol
 - extensions of any kind (should I even mention this?)
+
+## Maybes
+
+- bundle telescope incremental text/gemini parser too?
 
 ## TLS
 
