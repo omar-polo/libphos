@@ -504,7 +504,7 @@ phos_req_write_sync(struct phos_req *req, const void *data, size_t len)
 			return r;
 		default:
 			/* a bug in the io layer? */
-			if (r > len)
+			if ((size_t)r > len)
 				return -1;
 
 			len -= r;
