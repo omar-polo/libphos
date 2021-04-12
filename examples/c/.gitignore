@@ -1,5 +1,6 @@
 *.pem
 *.o
+async-server
 blocking-server
 blocking-client
 
