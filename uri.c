@@ -226,7 +226,8 @@ sub_path_common(const char *s)
 static const char *
 parse_scheme(const char *s, struct phos_uri *parsed)
 {
-	const char *start = s;
+	const char	*start = s;
+	size_t		 len;
 
 	if (!isalpha(*s))
 		return NULL;
@@ -245,10 +246,11 @@ parse_scheme(const char *s, struct phos_uri *parsed)
 	if (*s == '\0')
                 return NULL;
 
-        if (s - start >= sizeof(parsed->scheme))
+	len = s - start;
+	if (len >= sizeof(parsed->scheme))
 		return NULL;
 
-	memcpy(parsed->scheme, start, s - start);
+	memcpy(parsed->scheme, start, len);
 	return s;
 }
 
@@ -260,13 +262,15 @@ parse_scheme(const char *s, struct phos_uri *parsed)
 static const char *
 parse_host(const char *s, struct phos_uri *parsed)
 {
-	const char *t;
+	const char	*t;
+	size_t		 len;
 
 	if ((t = sub_ip_literal(s)) != NULL ||
 	    (t = sub_host_dummy(s)) != NULL) {
-		if (t - s >= sizeof(parsed->scheme))
+		len = t - s;
+		if (len >= sizeof(parsed->scheme))
 			return NULL;
-		memcpy(parsed->host, s, t - s);
+		memcpy(parsed->host, s, len);
 		return t;
 	}
 
@@ -279,7 +283,8 @@ parse_host(const char *s, struct phos_uri *parsed)
 static const char *
 parse_port(const char *s, struct phos_uri *parsed)
 {
-	const char *errstr, *start = s;
+	const char	*errstr, *start = s;
+	size_t		 len;
 
 	while (isdigit(*s))
 		s++;
@@ -287,10 +292,11 @@ parse_port(const char *s, struct phos_uri *parsed)
 	if (s == start)
 		return NULL;
 
-	if (s - start >= sizeof(parsed->port))
+	len = s - start;
+	if (len >= sizeof(parsed->port))
 		return NULL;
 
-	memcpy(parsed->port, start, s - start);
+	memcpy(parsed->port, start, len);
 
         parsed->dec_port = strtonum(parsed->port, 0, 65535, &errstr);
 	if (errstr != NULL)
@@ -320,11 +326,15 @@ parse_authority(const char *s, struct phos_uri *parsed)
 static inline const char *
 set_path(const char *start, const char *end, struct phos_uri *parsed)
 {
+	size_t len;
+
 	if (end == NULL)
 		return NULL;
-	if (end - start >= sizeof(parsed->path))
+
+	len = end - start;
+	if (len >= sizeof(parsed->path))
 		return NULL;
-	memcpy(parsed->path, start, end - start);
+	memcpy(parsed->path, start, len);
 	return end;
 }
 
@@ -429,7 +439,8 @@ parse_hier_part(const char *s, struct phos_uri *parsed)
 static const char *
 parse_query(const char *s, struct phos_uri *parsed)
 {
-	const char *t, *start = s;
+	const char	*t, *start = s;
+	size_t		 len;
 
 	while (*s != '\0') {
 		if (*s == '/' || *s == '?') {
@@ -442,10 +453,11 @@ parse_query(const char *s, struct phos_uri *parsed)
 		s = t;
 	}
 
-	if (s - start >= sizeof(parsed->query))
+	len = s - start;
+	if (len >= sizeof(parsed->query))
 		return NULL;
 
-	memcpy(parsed->query, start, s - start);
+	memcpy(parsed->query, start, len);
 	return s;
 }
 
@@ -455,7 +467,8 @@ parse_query(const char *s, struct phos_uri *parsed)
 static const char *
 parse_fragment(const char *s, struct phos_uri *parsed)
 {
-	const char *start = s;
+	const char	*start = s;
+	size_t		 len;
 
 	while (*s != '\0' &&
 	    (*s == '/' || *s == '?' || (s = sub_pchar(s)) != NULL)) {
@@ -465,10 +478,11 @@ parse_fragment(const char *s, struct phos_uri *parsed)
 	if (s == NULL)
 		return NULL;
 
-	if (s - start >= sizeof(parsed->fragment))
+	len = s - start;
+	if (len >= sizeof(parsed->fragment))
 		return NULL;
 
-	memcpy(parsed->fragment, start, s - start);
+	memcpy(parsed->fragment, start, len);
 	return s;
 }
 
