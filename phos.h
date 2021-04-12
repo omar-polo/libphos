@@ -125,14 +125,16 @@ struct phos_server {
 };
 
 struct phos_req {
-	int			 fd;
+	/* internals */
 	void			*tls;
 	struct phos_io		*io;
+	const char		*meta;
+	int			 code;
+
+	int			 fd;
 	struct sockaddr_storage	 addr;
 	char			 line[1027];
 	size_t			 off;
-	int			 code;
-	char			*meta;
 
 	int			 io_err;
 	int			 proto_err;
