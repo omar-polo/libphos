@@ -1,0 +1,368 @@
+.\" Copyright (c) 2021 Omar Polo <op@omarpolo.com>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.Dd $Mdocdate: April 12 2021$
+.Dt PHOS_REQ 3
+.Os
+.Sh NAME
+.Nm phos_req_new ,
+.Nm phos_req_handshake ,
+.Nm phos_req_handshake_sync ,
+.Nm phos_req_read_request ,
+.Nm phos_req_read_request_sync ,
+.Nm phos_req_reply ,
+.Nm phos_req_reply_flush ,
+.Nm phos_req_reply_sync ,
+.Nm phos_req_write ,
+.Nm phos_req_write_sync ,
+.Nm phos_req_close ,
+.Nm phos_req_close_sync ,
+.Nm phos_req_del ,
+.Nm phos_req_free ,
+.Nm phos_req_fd ,
+.Nm phos_req_request_line ,
+.Nm phos_req_sent_code ,
+.Nm phos_req_sent_meta ,
+.Nm phos_req_err
+.Nd managing client connections
+.Sh SYNOPSIS
+.Ft struct phos_req *
+.Fn phos_req_new "void"
+.Ft int
+.Fn phos_req_handshake "struct phos_req *req"
+.Ft int
+.Fn phos_req_handshake_sync "struct phos_req *req"
+.Ft int
+.Fn phos_req_read_request "struct phos_req *req"
+.Ft int
+.Fn phos_req_read_request_sync "struct phos_req *req"
+.Ft int
+.Fn phos_req_reply "struct phos_req *req" "int code" "const char *meta"
+.Ft int
+.Fn phos_req_reply_flush "struct phos_req *req"
+.Ft int
+.Fn phos_req_reply_sync "struct phos_req *req" "int code" "const char *meta"
+.Ft ssize_t
+.Fn phos_req_write "struct phos_req *req" "const void *data" "size_t len"
+.Ft int
+.Fn phos_req_write_sync "struct phos_req *req" "const void *data" "size_t len"
+.Ft int
+.Fn phos_req_close "struct phos_req *req"
+.Ft int
+.Fn phos_req_close_sync "struct phos_req *req"
+.Ft int
+.Fn phos_req_del "struct phos_req *req"
+.Ft int
+.Fn phos_req_free "struct phos_req *req"
+.Ft int
+.Fn phos_req_fd "struct phos_req *req"
+.Ft const char *
+.Fn phos_req_request_line "struct phos_req *req"
+.Ft int
+.Fn phos_req_sent_code "struct phos_req *req"
+.Ft const char *
+.Fn phos_req_sent_meta "struct phos_req *req"
+.Ft const char *
+.Fn phos_req_err "struct phos_req *req"
+.Sh DESCRIPTION
+The
+.Nm phos_req
+functions provide a simple interface to manage client requests in a
+server.
+Please refer to
+.Xr phos_server 3
+for more information on how set up a server and accept requests.
+This page only describes how to manage an incoming request.
+.Pp
+Requests are initialised by the
+.Xr phos_server_accept 3
+family of functions.
+For convenience, a
+.Fn phos_req_new
+function is provided to allocate the storage for a client connection.
+.Pp
+A request looks like this:
+.Bd -literal -offset indent
+struct phos_req {
+	/* internals */
+	void			*tls;
+	struct phos_io		*io;
+	const char		*meta;
+	int			 code;
+
+	int			 fd;
+	struct sockaddr_storage	 addr;
+	char			 line[1027];
+	size_t			 off;
+
+	int			 io_err;
+	int			 proto_err;
+	int			 c_errno;
+	char			*err;
+};
+.Ed
+.Pp
+All the fields should be considered read-only.
+.Pp
+.Fn phos_req_handshake
+is used to explicitly perform the TLS handshake.
+After it returns successfully, it's possible to access the information
+about the connection (TLS version, certificates used and so on.)
+.Pp
+Then the client request can be read with
+.Fn phos_req_read_request .
+After a successful return the request line can be accessed either
+using the
+.Va line
+field on the struct
+.Vt phos_req
+or by using
+.Fn phos_req_request_line .
+.Nm phos
+will strip the CRLF from the request.
+.Pp
+Then it's the turn for the server to send the response header.
+.Fn phos_req_reply
+is used to prepare the reply, and
+.Fn phos_req_reply_flush
+to actually send it.
+Note:
+.Nm phos
+will automatically add the trailing CRLF.
+.Pp
+After the response has been sent, the server can optionally send a
+response body.
+This is done using
+.Fn phos_req_write .
+.Pp
+To properly terminate a connection
+.Fn phos_req_close
+should be called.
+.Pp
+Once a connection is over, the storage associate with it must be freed.
+Use
+.Fn phos_req_del
+if you provided the storage by yourself or
+.Fn phos_req_free
+if you used
+.Fn phos_req_new
+to allocate the space.
+.Pp
+For all the functions mentioned, there is a blocking counterpart:
+.Bl -bullet
+.It
+.Fn phos_req_handshake_sync
+is the blocking counterpart of
+.Fn phos_req_handshake .
+.It
+.Fn phos_req_read_request_sync
+is the blocking counterpart of
+.Fn phos_req_read_request .
+.It
+.Fn phos_req_reply_sync
+is the blocking counterpart of
+.Fn phos_req_reply
+and
+.Fn phos_req_flush .
+.It
+.Fn phos_req_write_sync
+is the blocking counterpart of
+.Fn phos_req_write .
+.It
+.Fn phos_req_close_sync
+is the blocking counterpart of
+.Fn phos_req_close .
+.El
+.Pp
+These blocking counterparts will return only once the operation has
+been done successful, or in the case of an error.
+.Sh THREAD SAFETY
+The
+.Nm phos_req
+interface is thread-safe and lock-free internally, but the following
+restriction applies:
+Two different threads must not call functions one the same
+.Fa req .
+If they want to do that, all calls must be protected by a mutex around
+the struct.
+.Pp
+It is generally not a problem since the main point of the asynchronous
+handling of client requests is to multiplex more of them within a
+single thread of control.
+.Sh RETURN VALUES
+.Fn phos_req_new
+returns NULL if it wasn't able to allocate the space.
+.Pp
+.Fn phos_req_handshake ,
+.Fn phos_req_handshake_sync ,
+.Fn phos_req_read_request ,
+.Fn phos_req_read_request_sync ,
+.Fn phos_req_reply ,
+.Fn phos_req_reply_flush ,
+.Fn phos_req_reply_sync ,
+.Fn phos_req_close ,
+.Fn phos_req_close_sync
+return -1 on error, 0 on EOF, 1 on success.
+.Pp
+.Fn phos_req_write ,
+.Fn phos_req_write_sync
+return -1 on error, 0 on EOF or the number of bytes written.
+.Fn phos_req_write_sync
+in particular will always return the exact same number of bytes
+requested, if an error doesn't occur.
+.Pp
+In addition,
+.Fn phos_req_handshake ,
+.Fn phos_req_read_request ,
+.Fn phos_req_reply_flush ,
+.Fn phos_req_write ,
+and
+.Fn phos_req_close
+can also return two special values:
+.Bl -tag -offset indent -width PHOS_WANT_WRITE
+.It Dv PHOS_WANT_READ
+The underlying file descriptor needs to be readable in order to
+continue.
+.It Dv PHOS_WANT_WRITE
+The underlying file descriptor needs to be writeable in order to
+continue.
+.El
+.Pp
+The same function call should be repeated when the required condition
+has been met.
+.Sh EXAMPLES
+The following example shows how handle a request in a blocking manner:
+.Bd -literal -indent offset
+void
+handle_request(struct phos_req *req)
+{
+	const char *str;
+
+	if (phos_req_handshake_sync(req) == -1)
+		goto end;
+	if (phos_req_read_request_sync(&req) == -1)
+		goto end;
+
+	printf("GET %s\\n", req->line);
+
+	/* do something sensible with the request */
+
+	if (phos_req_reply_sync(req, 20, "text/gemini") == -1)
+		goto end;
+
+	str = "# hello, world\\n";
+	if (phos_req_write_sync(req, str, strlen(str)) == -1)
+		goto end;
+
+end:
+	phos_req_close_sync(req);
+	phos_req_del(req);
+}
+.Ed
+.Pp
+The following is the same, except that it uses the
+.Xr event 3
+library to monitor the socket file descriptor.
+.Bd -literal -indent offset
+#include <event.h>
+
+void
+handle_request(struct phos_req *req)
+{
+	event_once(req->fd, EV_READ, do_handshake, req, NULL);
+}
+
+void
+do_handshake(int fd, short ev, void *data)
+{
+	struct phos_req *req = data;
+
+	switch (phos_req_handshake(req)) {
+	case -1:
+		phos_req_del(req);
+		return;
+	case PHOS_WANT_READ:
+		event_once(fd, EV_READ, do_handshake, req, NULL);
+		return;
+	case PHOS_WANT_WRITE:
+		event_once(fd, EV_WRITE, do_handshake, req, NULL);
+		return;
+	}
+
+	printf("handshake done\\n");
+	read_request(req->fd, 0, req);
+}
+
+void
+read_request(int fd, short ev, void *data)
+{
+	struct phos_req	*req = data;
+	const char	*str;
+
+	switch (phos_req_read_request(req)) {
+	case -1:
+	case 0:
+		phos_req_del(req);
+		return;
+	case PHOS_WANT_READ:
+		event_once(fd, EV_READ, read_request, req, NULL);
+		return;
+	case PHOS_WANT_WRITE:
+		event_once(fd, EV_WRITE, read_request, req, NULL);
+		return;
+	}
+
+	printf("GET %s\\n", req->line);
+
+	str = "# hello, world\\n";
+	phos_req_reply(req, str, strlen(str));
+	close_request(fd, 0, req);
+}
+
+void
+close_request(int fd, short ev, void *data)
+{
+	struct phos_req	*req = data;
+
+	switch (phos_req_close(req)) {
+	case PHOS_WANT_READ:
+		event_once(fd, EV_READ, close_request, req, NULL);
+		return;
+	case PHOS_WANT_WRITE:
+		event_once(fd, EV_WRITE, close_request, req, NULL);
+		return;
+	}
+
+	phos_req_del(req);
+}
+.Ed
+.Sh SEE ALSO
+.Xr phos_client 3 ,
+.Xr phos_io 3 ,
+.Xr phos_uri 3
+.Sh AUTHORS
+.An Omar Polo Aq Mt phos@omarpolo.com
+.Sh CAVEATS
+The
+.Fn phos_req_err
+and the
+.Va err
+field of the
+.Nm phos_req
+struct must no be freed by the application, or a double free error
+will corru.
+The pointer will become invalid when the next error occurs, so if the
+application needs the message at a later time, it has to copy the
+string before calling the next
+.Nm phos_req
+function.
