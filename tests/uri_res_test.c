@@ -21,25 +21,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TEST(ref, exp) do_test(BASE_URI, ref, exp)
+#define TEST(ref, exp) do_test(BASE_URI, ref, exp, __LINE__)
 
 static void
-do_test(const char *base, const char *ref, const char *exp)
+do_test(const char *base, const char *ref, const char *exp, int lineno)
 {
 	struct phos_uri base_uri, ret_uri;
 	char buf[1025];
 
 	if (!phos_parse_uri_reference(base, &base_uri))
-		errx(1, "failed to parse base URI: %s", base);
+		errx(1, __FILE__ ":%d failed to parse base URI: %s",
+		    lineno, base);
 
 	if (!phos_resolve_uri_from_str(&base_uri, ref, &ret_uri))
-		errx(1, "failed to resolve %s from %s", ref, base);
+		errx(1, __FILE__ ":%d failed to resolve %s from %s",
+		    lineno, ref, base);
 
 	if (!phos_serialize_uri(&ret_uri, buf, sizeof(buf)))
-		errx(1, "failed to serialize ret_uri");
+		errx(1, __FILE__ ":%d failed to serialize ret_uri",
+		    lineno);
 
 	if (strcmp(exp, buf)) {
-		printf("test failed\n");
+		printf(__FILE__ ":%d test failed\n", lineno);
 		printf("base=%s ref=%s\n", base, ref);
 		printf("got: %s\n", buf);
 		printf("want: %s\n", exp);
@@ -53,7 +56,6 @@ main(void)
 	/* examples taken from the RFC 3986 */
 
 #define BASE_URI "http://a/b/c/d;p?q"
-
 	TEST("g:h", "g:h");
 	TEST("g", "http://a/b/c/g");
 	TEST("./g", "http://a/b/c/g");
@@ -74,7 +76,7 @@ main(void)
 	TEST("..", "http://a/b/");
 	TEST("../", "http://a/b/");
 	TEST("../g", "http://a/b/g");
-	/* TEST("../..", "http://a/"); */
+	TEST("../..", "http://a/");
 	TEST("../../", "http://a/");
 	TEST("../../g", "http://a/g");
 }
