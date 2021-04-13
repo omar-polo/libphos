@@ -25,6 +25,7 @@ test-driver
 
 afl
 
+fuzzy_server
 fuzzy_uri_parser
 uri_parse_test
 uri_res_test
