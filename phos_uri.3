@@ -18,6 +18,7 @@
 .Nm phos_parse_absolute_uri ,
 .Nm phos_parse_uri_reference ,
 .Nm phos_resolve_uri_from_str ,
+.Nm phos_uri_drop_empty_segments ,
 .Nm phos_serialize_uri
 .Nd URI-related utilities
 .Sh SYNOPSIS
@@ -26,6 +27,8 @@
 .Fn phos_parse_absolute_uri "const char *str" "struct phos_uri *uri"
 .Ft int
 .Fn phos_parse_uri_reference "const char *str" "struct phos_uri *uri"
+.Ft void
+.Fn phos_uri_drop_empty_segments "struct phos_uri *uri"
 .Ft int
 .Fn phos_resolve_uri_from_str "const struct phos_uri *base" "const char *refstr" \
     "struct phos_uri *ret"
@@ -74,6 +77,15 @@ from the absolute URI
 .Fa base .
 It's particularly useful in the context of clients to resolve, say, a
 URI in a link line according to the page URI.
+.Pp
+.Fn phos_uri_drop_empty_segments
+clear the
+.Fa uri
+path by dropping empty path segments, i.e. replacing multiples slashes
+with only one.
+The modified URI such obtained is not strictly speaking equivalent to
+the original one, so clients should not perform this kind of
+transformation.
 .Pp
 .Fn phos_serialize_uri
 can be used to obtain the string representation of the given URI:
