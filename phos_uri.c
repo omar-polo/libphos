@@ -54,8 +54,12 @@ static const char	*parse_relative_part(const char*, struct phos_uri*);
 static const char	*parse_relative_ref(const char*, struct phos_uri*);
 static const char	*parse_uri_reference(const char*, struct phos_uri*);
 
-static int		 path_elide_dotdot(char*, char*, int);
-static int		 gmid_path_clean(char *path);
+static int		 hasprefix(const char*, const char*);
+static char		*dotdot(char*, char*);
+static void		 path_clean(struct phos_uri*);
+static int		 merge_path(struct phos_uri*, const struct phos_uri*, const struct phos_uri*);
+
+static int		 phos_resolve_uri_from(const struct phos_uri*, const struct phos_uri*, struct phos_uri*);
 
 
 /* common defs */
@@ -470,13 +474,18 @@ parse_fragment(const char *s, struct phos_uri *parsed)
 	const char	*start = s;
 	size_t		 len;
 
-	while (*s != '\0' &&
-	    (*s == '/' || *s == '?' || (s = sub_pchar(s)) != NULL)) {
-		s++;
-	}
+	for (;;) {
+		if (*s == '\0')
+			break;
 
-	if (s == NULL)
-		return NULL;
+		if (*s == '/' || *s == '?') {
+			s++;
+			continue;
+		}
+
+		if ((s = sub_pchar(s)) == NULL)
+			return NULL;
+	}
 
 	len = s - start;
 	if (len >= sizeof(parsed->fragment))
@@ -611,99 +620,77 @@ parse_absolute_uri(const char *s, struct phos_uri *parsed)
 
 /* normalizing fns */
 
-/* Routine for path_clean.  Elide the pointed .. with the preceding
- * element.  Return 0 if it's not possible.  incr is the length of
- * the increment, 3 for ../ and 2 for .. */
 static int
-path_elide_dotdot(char *path, char *i, int incr)
+hasprefix(const char *str, const char *prfx)
 {
-	char *j;
+	for (; *str == *prfx && *prfx != '\0'; str++, prfx++)
+		;
 
-	if (i == path)
-		return 0;
-	for (j = i-2; j != path && *j != '/'; j--)
-                /* noop */ ;
-	if (*j == '/')
-		j++;
-	i += incr;
-	memmove(j, i, strlen(i)+1);
-	return 1;
+	return *prfx == '\0';
+}
+
+static char *
+dotdot(char *point, char *start)
+{
+	char	*t;
+
+	for (t = point-1; t > start; --t) {
+		if (*t == '/')
+			break;
+	}
+
+	memmove(t, point, strlen(point)+1);
+	return t;
 }
 
 /*
- * Use an algorithm similar to the one implemented in go' path.Clean:
- *
- * 1. Replace multiple slashes with a single slash
- * 2. Eliminate each . path name element
- * 3. Eliminate each inner .. along with the non-.. element that precedes it
- * 4. Eliminate trailing .. if possible or error (go would only discard)
- * 5. Eliminate trailing .
- *
- * Unlike path.Clean, this function return the empty string if the
- * original path is equivalent to "/".
+ * This is the "Remove Dot Segments" straight outta RFC3986, section
+ * 5.2.4
  */
-static int
-gmid_path_clean(char *path)
-{
-	char *i;
-
-	/* 1. replace multiple slashes with a single one */
-	for (i = path; *i; ++i) {
-		if (*i == '/' && *(i+1) == '/') {
-			memmove(i, i+1, strlen(i)); /* move also the \0 */
-			i--;
-		}
-	}
-
-	/* 2. eliminate each . path name element */
-	for (i = path; *i; ++i) {
-		if ((i == path || *i == '/') &&
-		    *i != '.' && i[1] == '.' && i[2] == '/') {
-			/* move also the \0 */
-			memmove(i, i+2, strlen(i)-1);
-			i--;
-		}
-	}
-	if (!strcmp(path, ".") || !strcmp(path, "/.")) {
-		*path = '\0';
-		return 1;
-	}
-
-	/* 3. eliminate each inner .. along with the preceding non-.. */
-	for (i = strstr(path, "../"); i != NULL; i = strstr(path, ".."))
-		if (!path_elide_dotdot(path, i, 3))
-			return 0;
-
-	/* 4. eliminate trailing ..*/
-	if ((i = strstr(path, "..")) != NULL)
-		if (!path_elide_dotdot(path, i, 2))
-			return 0;
-
-	if ((i = strrchr(path, '/')) != NULL && i[1] == '.' && i[2] == '\0')
-		i[1] = '\0';
-
-	return 1;
-}
-
-/*
- * RFC3986 suggest a simple and interesting path cleaning algorithm.
- * They call it "Remove Dot Segments", see section 5.2.4.
- *
- * For the time being, instead of that I'm reusing the path_clean
- * routine from gmid IRI implementation.  It's akin to the go'
- * path.Clean algorithm, and should be equal to the one proposed in
- * the RFC, at least in the more common scenarious.
- */
-static inline int
+static void
 path_clean(struct phos_uri *uri)
 {
-	return gmid_path_clean(uri->path);
+	char	*in = uri->path;
+
+	while (in != NULL && *in != '\0') {
+		/* A) drop leading ../ or ./ */
+		if (hasprefix(in, "../"))
+			memmove(in, &in[3], strlen(&in[3])+1);
+		else if (hasprefix(in, "./"))
+			memmove(in, &in[2], strlen(&in[2])+1);
+
+		/* B) replace /./ or /. with / */
+		else if (hasprefix(in, "/./"))
+			memmove(&in[1], &in[3], strlen(&in[3])+1);
+		else if (!strcmp(in, "/."))
+                        in[1] = '\0';
+
+		/* C) resolve dot-dot */
+		else if (hasprefix(in, "/../")) {
+			in = dotdot(in, uri->path);
+			memmove(&in[1], &in[4], strlen(&in[4])+1);
+		} else if (!strcmp(in, "/..")) {
+			in = dotdot(in, uri->path);
+			in[1] = '\0';
+			break;
+		}
+
+		/* D */
+		else if (!strcmp(in, "."))
+			*in = '\0';
+		else if (!strcmp(in, ".."))
+			*in = '\0';
+
+		/* E */
+		else
+			in = strchr(in+1, '/');
+	}
 }
 
 /*
  * see RFC3986 5.3.3 "Merge Paths".
  */
-static inline int
+static int
 merge_path(struct phos_uri *ret, const struct phos_uri *base,
     const struct phos_uri *ref)
 {
@@ -735,7 +722,8 @@ phos_parse_absolute_uri(const char *s, struct phos_uri *uri)
 		return 0;
 	if (*s != '\0')
 		return 0;
-	return path_clean(uri);
+	path_clean(uri);
+	return 1;
 }
 
 int
@@ -747,7 +735,8 @@ phos_parse_uri_reference(const char *s, struct phos_uri *uri)
 		return 0;
 	if (*s != '\0')
 		return 0;
-	return path_clean(uri);
+	path_clean(uri);
+	return 1;
 }
 
 /*
@@ -799,8 +788,7 @@ phos_resolve_uri_from(const struct phos_uri *base, const struct phos_uri *ref,
 				else {
 					if (!merge_path(ret, base, ref))
 						return 0;
-					if (!path_clean(ret))
-						return 0;
+					path_clean(ret);
 				}
 
 				strlcpy(ret->query, ref->query, sizeof(ret->query));
@@ -834,6 +822,19 @@ phos_resolve_uri_from_str(const struct phos_uri *base, const char *refstr,
 		return 0;
 
 	return phos_resolve_uri_from(base, &ref, ret);
+}
+
+void
+phos_uri_drop_empty_segments(struct phos_uri *uri)
+{
+	char *i;
+
+	for (i = uri->path; *i; ++i) {
+		if (*i == '/' && *(i+1) == '/') {
+			memmove(i, i+1, strlen(i)); /* move also the \0 */
+			i--;
+		}
+	}
 }
 
 int
