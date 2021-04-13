@@ -12,7 +12,7 @@ dist_man3_MANS =	phos_client.3 phos_server.3 phos_req.3 phos_uri.3
 # tests
 
 TESTS =			uri_parse_test uri_res_test
-check_PROGRAMS =	uri_parse_test uri_res_test uri_fuzzy
+check_PROGRAMS =	uri_parse_test uri_res_test fuzzy_uri_parser
 
 uri_parse_test_SOURCES=	tests/uri_parse_test.c
 uri_parse_test_LDADD =	libphos.la
@@ -22,16 +22,16 @@ uri_res_test_LDADD =	libphos.la
 
 # fuzzy
 
-uri_fuzzy_SOURCES =	tests/uri_fuzzy.c
-uri_fuzzy_LDADD =	libphos.la
+fuzzy_uri_parser_SOURCES =	tests/fuzzy_uri_parser.c
+fuzzy_uri_parser_LDADD =	libphos.la
 
 clean-local:
 	-rm -rf afl
 
-afl: uri_parse_test.c
+afl: tests/uri_parse_test.c
 	mkdir -p afl/in afl/out
 	./gen-afl-data.sh
 
 .PHONY: fuzzy
-fuzzy: afl uri_fuzzy
-	afl-fuzz -i afl/in -o afl/out ./uri_fuzzy
+fuzzy: afl fuzzy_uri_parser
+	afl-fuzz -i afl/in -o afl/out ./fuzzy_uri_parser
