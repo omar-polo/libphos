@@ -23,7 +23,9 @@ test-driver
 *.log
 *.trs
 
-uri_fuzzy
+afl
+
+fuzzy_uri_parser
 uri_parse_test
 uri_res_test
 

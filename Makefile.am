@@ -28,8 +28,8 @@ fuzzy_uri_parser_LDADD =	libphos.la
 clean-local:
 	-rm -rf afl
 
-afl: tests/uri_parse_test.c
-	mkdir -p afl/in afl/out
+afl: tests/uri_parse_test.c fuzzy_uri_parser
+	mkdir -p afl/in.orig afl/in afl/out
 	./gen-afl-data.sh
 
 .PHONY: fuzzy
