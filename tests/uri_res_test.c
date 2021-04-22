@@ -79,4 +79,15 @@ main(void)
 	TEST("../..", "http://a/");
 	TEST("../../", "http://a/");
 	TEST("../../g", "http://a/g");
+
+#undef BASE_URI
+#define BASE_URI "gemini://examp.le/files/stuff/other/"
+
+	TEST(".", "gemini://examp.le/files/stuff/other/");
+	TEST("..", "gemini://examp.le/files/stuff/");
+	TEST("../", "gemini://examp.le/files/stuff/");
+	TEST("../..", "gemini://examp.le/files/");
+	TEST("../../", "gemini://examp.le/files/");
+	TEST("../../..", "gemini://examp.le/");
+	TEST("../../../", "gemini://examp.le/");
 }
