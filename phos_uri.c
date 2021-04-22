@@ -638,6 +638,8 @@ dotdot(char *point, char *start)
 		if (*t == '/')
 			break;
 	}
+	if (t < start)
+		t = start;
 
 	memmove(t, point, strlen(point)+1);
 	return t;
