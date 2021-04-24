@@ -26,6 +26,7 @@
 
 #include <ctype.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -837,6 +838,40 @@ phos_uri_drop_empty_segments(struct phos_uri *uri)
 			i--;
 		}
 	}
+}
+
+int
+phos_uri_set_query(struct phos_uri *uri, const char *query)
+{
+	char		*out;
+	int		 t;
+	size_t		 len;
+
+	len = sizeof(uri->query);
+	out = uri->query;
+	memset(uri->query, 0, len);
+
+	for (; *query != '\0' && len > 0; ++query) {
+		if (*query == '/' ||
+		    *query == '?' ||
+		    *query == ':' ||
+		    *query == '@' ||
+		    unreserved(*query) ||
+		    sub_delims(*query)) {
+			*out++ = *query;
+			len--;
+		} else {
+			if (len <= 4)
+				break;
+			len -= 3;
+			*out++ = '%';
+			t = *query;
+			sprintf(out, "%02X", t);
+			out += 2;
+		}
+	}
+
+	return *query == '\0';
 }
 
 int
