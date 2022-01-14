@@ -38,20 +38,6 @@ const char	*pltls_err(void*);
 static int	 pltls_close(void*);
 static int	 pltls_free(void*);
 
-struct phos_io phos_libtls = {
-	.client_new =		pltls_client_new,
-	.server_new =		pltls_server_new,
-	.setup_client_socket =	pltls_setup_client_socket,
-	.setup_server_client =	pltls_setup_server_client,
-	.load_keypair =		pltls_load_keypair,
-	.handshake =		pltls_handshake,
-	.write =		pltls_write,
-	.read =			pltls_read,
-	.err =			pltls_err,
-	.close =		pltls_close,
-	.free =			pltls_free,
-};
-
 static void *
 pltls_client_new(void)
 {

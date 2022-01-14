@@ -138,15 +138,18 @@ phos_server_init_from_fd(struct phos_server *serv, int fd)
 		ERRF(serv, "mark_nonblock: %s", strerror(serv->c_errno));
 		return -1;
 	}
+	serv->fd = fd;
 
-	serv->io = &phos_libtls;
-	if ((serv->tls = serv->io->server_new()) == NULL) {
+	if ((serv->conf = tls_config_new()) == NULL) {
 		ERRF(serv, "%s", "TLS init error");
 		serv->io_err = 1;
 		return -1;
 	}
 
-	serv->fd = fd;
+	/* optionally accept client certs, but don't try to verify them */
+	tls_config_verify_client_optional(serv->conf);
+	tls_config_insecure_noverifycert(serv->conf);
+
 	return 0;
 }
 
@@ -215,12 +218,24 @@ phos_server_load_keypair_mem(struct phos_server *serv,
     const uint8_t *certmem, size_t certlen,
     const uint8_t *keymem, size_t keylen)
 {
-	if (serv->io->load_keypair(serv->tls, certmem, certlen, keymem, keylen) == -1) {
-		ERRF(serv, "TLS loadkeypair: %s", serv->io->err(serv->tls));
-		return -1;
+	int s;
+
+	if (!serv->keyp_loaded) {
+		serv->keyp_loaded = 1;
+		s = tls_config_set_keypair_mem(serv->conf,
+		    certmem, certlen,
+		    keymem, keylen);
+	} else
+		s = tls_config_add_keypair_mem(serv->conf,
+		    certmem, certlen,
+		    keymem, keylen);
+
+	if (s == -1) {
+		ERRF(serv, "TLS loadkeypair: %s", "");
+		serv->io_err = 1;
 	}
 
-	return 0;
+	return s;
 }
 
 int
@@ -256,10 +271,23 @@ phos_server_accept_fd(struct phos_server *serv, struct phos_req *req, int fd)
 		goto err;
 	}
 
-	req->io = serv->io;
-	if ((req->tls = serv->io->setup_server_client(serv->tls, fd)) == NULL) {
+	if (serv->ctx == NULL) {
+		if ((serv->ctx == tls_server()) == NULL) {
+			serv->io_err = 1;
+			ERRF(serv, "tls_server: %s", "out of memory");
+			goto err;
+		}
+
+		if (tls_configure(serv->ctx, serv->conf) == -1) {
+			serv->io_err = 1;
+			ERRF(serv, "tls_configure: %s", "can't configure");
+			goto err;
+		}
+	}
+
+	if (tls_accept_socket(serv->ctx, &req->ctx, fd) == -1) {
 		serv->io_err = 1;
-		ERRF(serv, "TLS setup error: %s", serv->io->err(serv->tls));
+		ERRF(serv, "tls_accept_socket: %s", "can't accept socket");
 		goto err;
 	}
 

@@ -45,29 +45,16 @@ struct phos_uri {
 	char		fragment[32];
 };
 
-/* io abstraction */
-struct phos_io {
-	void		*(*client_new)(void);
-	void		*(*server_new)(void);
-	int		 (*setup_client_socket)(void*, int, const char*);
-	void		*(*setup_server_client)(void*, int);
-	int		 (*load_keypair)(void*, const uint8_t*, size_t, const uint8_t*, size_t);
-	int		 (*handshake)(void*);
-	ssize_t		 (*write)(void*, const void*, size_t);
-	ssize_t		 (*read)(void*, void*, size_t);
-	const char	*(*err)(void*);
-	int		 (*close)(void*);
-	int		 (*free)(void*);
-};
-
-extern struct phos_io phos_libtls;
-
 /* client.c */
 
 struct phos_client {
 	/* internals */
 	void			*tls;
-	struct phos_io		*io;
+
+	struct tls_config	*conf;
+	struct tls		*ctx;
+	int			 keyp_loaded;
+
 	int			 state;
 	struct addrinfo		*servinfo, *p;
 	void			*asr;
@@ -118,7 +105,11 @@ const char		*phos_client_err(struct phos_client*);
 struct phos_server {
 	int			 fd;
 	void			*tls;
-	struct phos_io		*io;
+
+	struct tls_config	*conf;
+	struct tls		*ctx;
+	int			 keyp_loaded;
+
 	int			 io_err;
 	int			 c_errno;
 	char			*err;
@@ -127,7 +118,11 @@ struct phos_server {
 struct phos_req {
 	/* internals */
 	void			*tls;
-	struct phos_io		*io;
+
+	struct tls_config	*conf;
+	struct tls		*ctx;
+	int			 keyp_loaded;
+
 	char			*meta;
 	int			 code;
 

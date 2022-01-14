@@ -231,18 +231,25 @@ do_connect(struct phos_client *client)
 static int
 setup_tls(struct phos_client *client)
 {
-	int r;
-
 	client->state = S_HANDSHAKE;
 
-	r= client->io->setup_client_socket(client->tls, client->fd, client->host);
-	if (r == -1) {
-		ERRF(client, "TLS setup error: %s", client->io->err(client->tls));
+	if ((client->ctx = tls_client()) == NULL) {
+		ERRF(client, "%s", "tls_client: out of memory");
 		client->io_err = 1;
-		return r;
+		return -1;
 	}
-	if (r != 1)
-		return r;
+
+	if (tls_configure(client->ctx, client->conf) == -1) {
+		ERRF(client, "tls_configure error: %s", tls_config_error(client->conf));
+		client->io_err = 1;
+		return -1;
+	}
+
+	if (tls_connect_socket(client->ctx, client->fd, client->host) == -1) {
+		ERRF(client, "tls_connect_socket: %s", tls_error(client->ctx));
+		client->io_err = 1;
+		return -1;
+	}
 
 	client->off = 0;
 
@@ -260,11 +267,10 @@ write_request(struct phos_client *client)
 
 	len = strlen(client->req);
 	for (;;) {
-		r= client->io->write(client->tls, client->req + client->off,
-		    len - client->off);
+		r = tls_write(client->ctx, client->req + client->off, len - client->off);
 		switch (r) {
 		case -1:
-			ERRF(client, "TLS write error: %s", client->io->err(client->tls));
+			ERRF(client, "TLS write error: %s", tls_error(client->ctx));
 			client->io_err = 1;
 		case 0:
 		case PHOS_WANT_READ:
@@ -294,9 +300,9 @@ read_reply(struct phos_client *client)
 	len = sizeof(client->buf) - client->off;
 
 	for (;;) {
-		switch (r = client->io->read(client->tls, buf, len)) {
+		switch (r = tls_read(client->ctx, buf, len)) {
 		case -1:
-			ERRF(client, "TLS read error: %s", client->io->err(client->tls));
+			ERRF(client, "TLS read error: %s", tls_error(client->ctx));
 			client->io_err = 1;
 		case 0:
 		case PHOS_WANT_READ:
@@ -367,11 +373,15 @@ close_conn(struct phos_client *client)
 
 	client->state = S_CLOSING;
 
-	if ((r = client->io->close(client->tls)) == 0)
-		client->state = S_EOF;
-	if (r == -1) {
-		ERRF(client, "TLS close error: %s", client->io->err(client->tls));
+	switch (r = tls_close(client->ctx)) {
+	case -1:
+		ERRF(client, "TLS close error: %s", tls_error(client->ctx));
 		client->io_err = 1;
+		/* fallthrough */
+	case 0:
+		tls_free(client->ctx);
+		client->ctx = NULL;
+		break;
 	}
 
 	return r;
@@ -509,12 +519,14 @@ phos_client_init(struct phos_client *client)
 	explicit_bzero(client, sizeof(*client));
 
 	client->fd = -1;
-	client->io = &phos_libtls;
 
-	if ((client->tls = client->io->client_new()) == NULL) {
+	if ((client->conf = tls_config_new()) == NULL) {
 		client->io_err = 1;
 		return -1;
 	}
+
+	tls_config_insecure_noverifycert(client->conf);
+	/* tls_config_insecure_noveryname(tlsconf); */
 
 	return 0;
 }
@@ -635,9 +647,9 @@ phos_client_read(struct phos_client *client, void *data, size_t len)
 		return -1;
 	}
 
-	r = client->io->read(client->tls, data, len);
+	r = tls_read(client->ctx, data, len);
 	if (r == -1) {
-		ERRF(client, "TLS read error: %s", client->io->err(client->tls));
+		ERRF(client, "TLS read error: %s", tls_error(client->ctx));
 		client->state = S_ERROR;
 		client->io_err = 1;
 		clear_data(client);
@@ -730,9 +742,11 @@ phos_client_close_sync(struct phos_client *client)
 int
 phos_client_del(struct phos_client *client)
 {
-	if (client->io->free(client->tls) == -1)
-		return -1;
-
+	/*
+	 * XXX: if phos_client_del is called before phos_client_close*
+	 * we'll leak memory!
+	 */
+	tls_config_free(client->conf);
 	return 0;
 }
 
