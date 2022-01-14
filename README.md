@@ -1,5 +1,20 @@
 # libphos
 
+**This library is deprecated!**
+
+I started it as a way to simplify and collect some pieces from
+[gmid][gmid] and [telescope][telescope] into a single place, but it
+turned out both projects had their different needs and coming up with a
+single library was difficult.  Phos continue to live as part of
+[telescope][telescope].
+
+[gmid]: https://github.com/omar-polo/gmid
+[telescope]: https://github.com/omar-polo/telescope
+
+----
+
+Original readme:
+
 phos is an ambitious project: a library to easily build asynchronous
 Gemini servers and clients.
 
@@ -19,13 +34,6 @@ Gemini servers and clients.
 
 - bundle telescope incremental text/gemini parser too?
 
-## TLS
-
-phos uses its own abstraction to manage TLS, so multiple TLS libraries
-can be used, and even swapped at runtime.  At the moment though, phos
-*requires* libretls to build: the default interface relies on that.
-Contribution to add other TLS backends are greatly appreciated.
-
 ## Building
 
 it's the usual spell
@@ -38,14 +46,13 @@ eventually with a
 
 	./autogen.sh
 
-before if you're building from a git checkout and not a tarball.
+if you're building from a git checkout and not a tarball.
 
 ## Documentation, Bindings & usage
 
 phos provides a set of manual page to describe the modules, please see
 
  - `phos_client.3` for the client description
- - `phos_io.3` for a description of the TLS abstraction
  - `phos_req.3` on how to handle client connections from a server
  - `phos_server.3` for the server description
  - `phos_uri.3` for the URI parser
